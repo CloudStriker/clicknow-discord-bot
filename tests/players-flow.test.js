@@ -29,7 +29,15 @@ function makeDeps(overrides = {}) {
     removeAllListeners() {},
     subscribePlain() {},
   };
-  const fakeResource = { volumeTransformer: { setVolume() {} } };
+  const fakeResource = {
+    volumeTransformer: {
+      setVolumeCalls: [],
+      setVolume(v) {
+        this.setVolumeCalls.push(v);
+      },
+    },
+  };
+  let resourceInput;
 
   const deps = {
     joinVoiceChannel: () => ({
@@ -38,7 +46,15 @@ function makeDeps(overrides = {}) {
       destroy() {},
     }),
     createAudioPlayer: () => fakePlayer,
-    createAudioResource: () => fakeResource,
+    createAudioResource(input) {
+      resourceInput = input;
+      return fakeResource;
+    },
+    fetchStream: async () => ({ marker: 'stream-body' }), // non-string input
+    recordedResourceInput() {
+      return resourceInput;
+    },
+    fakeResource,
     getStreamUrl: async () => ({ streamUrl: 'https://stream', title: 'resolved' }),
     eventPlayer: fakePlayer,
     sent,
@@ -115,6 +131,22 @@ test('a stream error mid-play advances exactly one track (no double-advance)', a
 
   assert.equal(player.nowPlaying?.title, 't2', 'advances exactly once per failure');
   assert.equal(player.queue.length, 0);
+});
+
+test('volume is applied through a fetched stream, not a URL string', async () => {
+  const env = makeDeps();
+  const player = makePlayer(env);
+
+  await player.enqueue(env.fakeInteraction, [track('t1')]);
+  await new Promise((r) => setImmediate(r)); // playNext resolves async
+
+  // With ffmpeg optimizations enabled (@discordjs/voice >= 0.16), a STRING
+  // input gets routed down the FFmpeg→OggOpus pipeline, which has NO
+  // volume transformer — that made /volume crash in production
+  // ("Cannot read properties of undefined (reading 'setVolume')").
+  const input = env.deps.recordedResourceInput();
+  assert.ok(typeof input !== 'string', 'resource input must not be a raw URL');
+  assert.deepEqual(env.deps.fakeResource.volumeTransformer.setVolumeCalls, [1]);
 });
 
 test('leaving voice (kick / auto-leave) never drains the queue into a dead connection', async () => {

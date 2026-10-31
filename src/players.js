@@ -18,6 +18,8 @@
 // constructor argument (tests use fakes; production passes nothing and
 // gets the real ones).
 
+import { Readable } from 'node:stream';
+
 import {
   createAudioPlayer,
   createAudioResource,
@@ -41,6 +43,16 @@ export const defaultDeps = {
   createAudioPlayer,
   createAudioResource,
   getStreamUrl,
+  /** Wrap a CDN stream URL in a Node readable (see #playNext why). */
+  fetchStream: async (streamUrl) => {
+    const response = await fetch(streamUrl, {
+      headers: { 'user-agent': 'discord-music-bot/1.0' },
+    });
+    if (!response.ok || !response.body) {
+      throw new YtDlpError(`Audio stream fetch failed (HTTP ${response.status})`);
+    }
+    return Readable.fromWeb(response.body);
+  },
 };
 
 const REAL_DEPS = defaultDeps;
@@ -241,7 +253,15 @@ export class GuildPlayer {
       const { streamUrl, title } = await this.#deps.getStreamUrl(next.url, this.#config);
       if (session !== this.#session) return; // we left while resolving — drop it
 
-      const resource = this.#deps.createAudioResource(streamUrl, { inlineVolume: true });
+      // IMPORTANT: the audio goes through fetch()/createAudioResource as a
+      // real stream, never as a URL string. @discordjs/voice optimizes
+      // string inputs straight to FFmpeg→OggOpus (when ffmpeg has libopus),
+      // and that pipeline has no volume transformer — with /volume there
+      // that would crash on resource.volumeTransformer.setVolume. A stream
+      // input is constrained to the FFmpeg→PCM→VolumeTransformer→Opus path.
+      const body = await this.#deps.fetchStream(streamUrl);
+
+      const resource = this.#deps.createAudioResource(body, { inlineVolume: true });
       const volumePct = this.#settings.get(this.guildId).volume;
       resource.volumeTransformer.setVolume(volumePct / 100);
 
