@@ -1,0 +1,10 @@
+# secrets — never commit these
+.env
+cookies.txt
+data/settings.json
+
+# runtime
+node_modules/
+
+# superpowers scratch workspace
+.superpowers/
