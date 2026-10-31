@@ -1,0 +1,24 @@
+# discord-music-bot — always-on runtime with hard resource limits.
+#
+#   start:   docker compose up -d --build
+#   logs:    docker compose logs -f
+#   stop:    docker compose down
+#   update:  git pull && docker compose up -d --build
+#
+# Secrets live in .env (copy .env.example). Never commit it.
+
+services:
+  bot:
+    build: .
+    image: discord-music-bot
+    container_name: discord-music-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data          # per-guild settings survive restarts
+      # Optional: only if YouTube demands login cookies for this IP (README FAQ):
+      # - ./cookies.txt:/app/cookies.txt:ro
+    # --- resource limits (spec decision #1) ---
+    cpus: "0.25"
+    mem_limit: 512m
+    memswap_limit: 1g
