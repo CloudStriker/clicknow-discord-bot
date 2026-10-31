@@ -29,7 +29,7 @@ import {
 import { PermissionFlagsBits } from 'discord.js';
 
 import { MAX_MISSED_FRAMES, makeAudioResource } from './audio.js';
-import { formatDuration } from './controls.js';
+import { formatDuration, nextLoopMode } from './controls.js';
 import { Queue } from './queue.js';
 import { YtDlpError } from './ytdlp.js';
 
@@ -129,6 +129,81 @@ export class GuildPlayer {
     return this.#voiceChannelId;
   }
 
+  /** Is the Current Track held by a Pause? */
+  get paused() {
+    return this.#paused;
+  }
+
+  /** Who paused (user tag), or null. */
+  get pausedBy() {
+    return this.#pausedBy;
+  }
+
+  /** 'off' | 'track' | 'queue' — see GLOSSARY "Loop mode". */
+  get loopMode() {
+    return this.#loopMode;
+  }
+
+  /** Seconds of the Current Track played so far (0 when idle). */
+  get elapsedSec() {
+    return (this.#resource?.playbackDuration ?? 0) / 1000;
+  }
+
+  /**
+   * Hold the Current Track. A Pause counts as silence: the auto-leave
+   * timeout starts now and Resume cancels it.
+   *
+   * @returns {'paused'|'already-paused'|'nothing-playing'}
+   */
+  pause(byTag) {
+    if (!this.#current || !this.#audio) return 'nothing-playing';
+    if (this.#paused) return 'already-paused';
+    this.#audio.pause(true);
+    this.#paused = true;
+    this.#pausedBy = byTag;
+    this.#clearSilenceTimer();
+    this.#startSilenceTimer();
+    return 'paused';
+  }
+
+  /** @returns {'resumed'|'not-paused'|'nothing-playing'} */
+  resume() {
+    if (!this.#current || !this.#audio) return 'nothing-playing';
+    if (!this.#paused) return 'not-paused';
+    this.#audio.unpause();
+    this.#endPause();
+    return 'resumed';
+  }
+
+  /** Set the Loop mode; anything but off/track/queue is ignored. */
+  setLoopMode(mode) {
+    if (LOOP_MODES.includes(mode)) this.#loopMode = mode;
+    return this.#loopMode;
+  }
+
+  /** off → track → queue → off (the 🔁 button). */
+  cycleLoopMode() {
+    return this.setLoopMode(nextLoopMode(this.#loopMode));
+  }
+
+  /** Shuffle the waiting Tracks; returns how many there are. */
+  shuffle() {
+    this.queue.shuffle();
+    return this.queue.length;
+  }
+
+  /** Remove a waiting Track by its /queue position (1 = next). */
+  removeAt(position) {
+    return this.queue.removeAt(position);
+  }
+
+  /** Empty the Queue; the Current Track keeps playing. Returns how many were removed. */
+  clearQueue() {
+    const removed = this.queue.length;
+    this.queue.clear();
+    return removed;
+  }
+
   /**
    * Add Tracks and start playing if the bot was idle.
    * Returns { added, joinedHere, queueLength } for the command reply.
@@ -143,7 +218,8 @@ export class GuildPlayer {
     if (problem) throw new VoiceJoinError(problem);
 
     this.#notifyChannel = interaction.channel;
-    this.#clearSilenceTimer();
+    // A Pause keeps counting as silence even when Tracks are added.
+    if (!this.#paused) this.#clearSilenceTimer();
 
     const joinedHere = await this.#ensureVoice(memberChannel);
     if (joinedHere) {
@@ -184,6 +260,8 @@ export class GuildPlayer {
     if (!this.#audio) return false;
     const hadSomething = Boolean(this.#current || this.queue.length > 0);
     this.#manualStop = false; // skipping means "advance to the next Track"
+    this.#skipRequested = true; // Loop mode track must not replay it
+    if (this.#paused) this.#endPause();
     this.#audio.stop(); // Idle fires → #playNext() — exactly one advance
     return hadSomething;
   }
@@ -313,7 +391,22 @@ export class GuildPlayer {
 
     const session = this.#session;
 
-    const next = this.queue.shift();
+    // Pick the next Track, honoring the Loop mode. `finished` is the Track
+    // that just ended; it is null on the first play and after a failed
+    // download, so a failing Track is never looped (spec #12).
+    const finished = this.#current;
+    const skipped = this.#skipRequested;
+    this.#skipRequested = false;
+    this.#endPause();
+
+    let next;
+    if (finished && this.#loopMode === 'track' && !skipped) {
+      next = finished;
+    } else {
+      if (finished && this.#loopMode === 'queue') this.queue.push(finished);
+      next = this.queue.shift();
+    }
+
     if (!next) {
       this.#killFfmpeg();
       this.#current = null;
@@ -353,6 +446,7 @@ export class GuildPlayer {
         console.error(`[${this.guildId}] unexpected play error: ${err}`);
       }
       this.#notify(`⚠️ Couldn't play **${next.title}** — skipping.`);
+      this.#current = null; // never loop or re-queue a failed Track
       this.#playNext();
     }
   }
@@ -375,6 +469,7 @@ export class GuildPlayer {
   #leave() {
     this.#clearSilenceTimer();
     this.queue.clear();
+    this.#loopMode = 'off'; // Loop mode is per visit, not saved
     this.#teardown();
   }
 
@@ -384,6 +479,9 @@ export class GuildPlayer {
    */
   #teardown() {
     this.#killFfmpeg();
+    this.#paused = false;
+    this.#pausedBy = null;
+    this.#skipRequested = false;
     this.#current = null;
     this.#resource = null;
     this.#session += 1; // abandon any in-flight stream resolution
@@ -418,6 +516,14 @@ export class GuildPlayer {
     // An idling bot shouldn't hold the process open on this timer alone;
     // in the Docker runtime the process has plenty of other work.
     this.#silenceTimer.unref?.();
+  }
+
+  /** Forget the Pause (and its silence timeout). */
+  #endPause() {
+    if (!this.#paused) return;
+    this.#paused = false;
+    this.#pausedBy = null;
+    this.#clearSilenceTimer();
   }
 
   #killFfmpeg() {
@@ -457,7 +563,13 @@ export class GuildPlayer {
   #silenceTimer;
   #session;
   #killCurrent = null; // stops the current Track's ffmpeg process
+  #paused = false;
+  #pausedBy = null;
+  #loopMode = 'off';
+  #skipRequested = false; // set by skip(); stops Loop mode track replaying
 }
+
+const LOOP_MODES = ['off', 'track', 'queue'];
 
 /**
  * One GuildPlayer per guild; the manager is what src/index.js talks to.
