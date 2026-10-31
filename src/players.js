@@ -29,7 +29,7 @@ import {
 import { PermissionFlagsBits } from 'discord.js';
 
 import { MAX_MISSED_FRAMES, makeAudioResource } from './audio.js';
-import { formatDuration, nextLoopMode } from './controls.js';
+import { buildControls, nextLoopMode, nowPlayingContent } from './controls.js';
 import { Queue } from './queue.js';
 import { YtDlpError } from './ytdlp.js';
 
@@ -433,7 +433,7 @@ export class GuildPlayer {
       this.#killCurrent = kill;
       this.#resource = resource;
       this.#audio?.play(resource);
-      this.#announceNowPlaying(next, next.title);
+      this.#sendNowPlaying(this.#notifyChannel);
     } catch (err) {
       if (session !== this.#session) return; // left while resolving — drop it
 
@@ -451,12 +451,82 @@ export class GuildPlayer {
     }
   }
 
-  #announceNowPlaying(track, resolvedTitle) {
-    const duration =
-      typeof track.durationSec === 'number' && track.durationSec > 0
-        ? ` (${formatDuration(track.durationSec)})`
-        : '';
-    this.#notify(`▶️ Now playing: **${resolvedTitle}**${duration}`);
+  // ── Now-playing message ───────────────────────────────────────────────
+  //
+  // Only the newest Now-playing message has working Controls (spec #3).
+  // Every send/edit swallows Discord errors: a message a moderator deleted
+  // must never interrupt playback.
+
+  /** Content + Controls for the Current Track, as a message payload. */
+  nowPlayingPayload({ disabled = false } = {}) {
+    const state = { paused: this.#paused, loopMode: this.#loopMode };
+    if (!this.#current) {
+      return { components: buildControls({ ...state, disabled: true }) };
+    }
+    return {
+      content: nowPlayingContent({
+        track: this.#current,
+        elapsedSec: this.elapsedSec,
+        pausedBy: this.#pausedBy,
+        next: this.queue.peek(0),
+        ...state,
+      }),
+      components: buildControls({ ...state, disabled }),
+    };
+  }
+
+  /** Re-render the current Now-playing message (after pause, loop…). */
+  async refreshNowPlaying() {
+    const message = this.#nowPlayingMessage;
+    if (!message || !this.#current) return;
+    try {
+      await message.edit(this.nowPlayingPayload());
+    } catch {
+      /* deleted or no access — nothing to update */
+    }
+  }
+
+  /**
+   * Post a fresh Now-playing message in `channel` (for /nowplaying); the
+   * previous one loses its Controls. False when nothing is playing.
+   */
+  async postNowPlaying(channel) {
+    if (!this.#current) return false;
+    return this.#sendNowPlaying(channel);
+  }
+
+  /** Send a new Now-playing message and retire the previous one. */
+  async #sendNowPlaying(channel) {
+    this.#disableMessage(this.#nowPlayingMessage);
+    this.#nowPlayingMessage = null;
+    const token = ++this.#nowPlayingToken;
+
+    let message;
+    try {
+      message = await channel?.send?.(this.nowPlayingPayload());
+    } catch {
+      return false;
+    }
+    if (!message) return false;
+
+    // A newer message (or a leave) happened while this one was sending.
+    if (token !== this.#nowPlayingToken || !this.#current) {
+      this.#disableMessage(message);
+      return false;
+    }
+    this.#nowPlayingMessage = message;
+    return true;
+  }
+
+  /** Grey out a message's Controls; ignores every failure. */
+  #disableMessage(message) {
+    if (!message?.edit) return;
+    try {
+      const disabled = buildControls({ paused: false, loopMode: 'off', disabled: true });
+      Promise.resolve(message.edit({ components: disabled })).catch(() => {});
+    } catch {
+      /* ignore */
+    }
   }
 
   // ── leaving ───────────────────────────────────────────────────────────
@@ -479,6 +549,9 @@ export class GuildPlayer {
    */
   #teardown() {
     this.#killFfmpeg();
+    this.#disableMessage(this.#nowPlayingMessage);
+    this.#nowPlayingMessage = null;
+    this.#nowPlayingToken += 1; // a message still being sent gets disabled
     this.#paused = false;
     this.#pausedBy = null;
     this.#skipRequested = false;
@@ -567,6 +640,8 @@ export class GuildPlayer {
   #pausedBy = null;
   #loopMode = 'off';
   #skipRequested = false; // set by skip(); stops Loop mode track replaying
+  #nowPlayingMessage = null; // the one message with live Controls
+  #nowPlayingToken = 0; // orders concurrent sends
 }
 
 const LOOP_MODES = ['off', 'track', 'queue'];

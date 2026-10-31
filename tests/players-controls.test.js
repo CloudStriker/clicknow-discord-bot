@@ -8,9 +8,30 @@ import { YtDlpError } from '../src/ytdlp.js';
 // mirrors @discordjs/voice where it matters: stop() reaches Idle, which is
 // what advances the Queue.
 
-function setup({ failUrls = [], silenceTimeoutMin = 1 } = {}) {
+function fakeTextChannel(name, { failEdits = false } = {}) {
+  const messages = [];
+  return {
+    name,
+    messages,
+    async send(payload) {
+      const msg = {
+        payload,
+        edits: [],
+        async edit(p) {
+          if (failEdits) throw new Error('Unknown Message');
+          msg.edits.push(p);
+        },
+      };
+      messages.push(msg);
+      return msg;
+    },
+  };
+}
+
+function setup({ failUrls = [], silenceTimeoutMin = 1, failEdits = false } = {}) {
   const made = [];
   const sent = [];
+  const text = fakeTextChannel('music', { failEdits });
   const audio = {
     handlers: {},
     pauseCalls: 0,
@@ -67,9 +88,14 @@ function setup({ failUrls = [], silenceTimeoutMin = 1 } = {}) {
   const interaction = {
     guildId: 'guild-1',
     member: { voice: { channel } },
-    channel: { send: async (m) => sent.push(m) },
+    channel: {
+      async send(m) {
+        sent.push(m);
+        return text.send(m);
+      },
+    },
   };
-  return { player, audio, made, sent, interaction };
+  return { player, audio, made, sent, text, interaction };
 }
 
 const t = (name) => ({ title: name, url: `https://youtu.be/${name}`, durationSec: 100, requesterTag: 'u' });
@@ -285,6 +311,88 @@ test('elapsedSec reads the resource playback duration', async () => {
   await playing(env, [t('t1')]);
   env.made[0].resource.playbackDuration = 5_000;
   assert.equal(env.player.elapsedSec, 5);
+});
+
+// ── Now-playing message ───────────────────────────────────────────────
+
+const buttonsOf = (payload) => payload.components[0].toJSON().components;
+const nowPlayingMessages = (text) =>
+  text.messages.filter((m) => typeof m.payload === 'object' && m.payload.components);
+
+test('a starting Track posts a Now-playing message with live Controls', async () => {
+  const env = setup();
+  await playing(env, [t('t1')]);
+
+  const [msg] = nowPlayingMessages(env.text);
+  assert.match(msg.payload.content, /Now playing: \*\*t1\*\*/);
+  assert.equal(buttonsOf(msg.payload).length, 5);
+  assert.ok(buttonsOf(msg.payload).every((b) => !b.disabled));
+});
+
+test('the next Track disables the previous message’s Controls', async () => {
+  const env = setup();
+  await playing(env, [t('t1'), t('t2')]);
+  env.audio.idle();
+  await settle();
+
+  const [first, second] = nowPlayingMessages(env.text);
+  assert.ok(buttonsOf(first.edits.at(-1)).every((b) => b.disabled === true));
+  assert.equal(second.edits.length, 0);
+});
+
+test('refreshNowPlaying edits the message with the current state', async () => {
+  const env = setup();
+  await playing(env, [t('t1')]);
+  env.player.pause('cinnamon.wool');
+  await env.player.refreshNowPlaying();
+
+  const [msg] = nowPlayingMessages(env.text);
+  const edit = msg.edits.at(-1);
+  assert.match(edit.content, /Paused by \*\*cinnamon.wool\*\*/);
+  assert.equal(buttonsOf(edit)[0].label, 'Resume');
+});
+
+test('postNowPlaying posts a fresh message elsewhere and disables the old one', async () => {
+  const env = setup();
+  await playing(env, [t('t1')]);
+  const other = fakeTextChannel('bottom');
+
+  assert.equal(await env.player.postNowPlaying(other), true);
+
+  const [old] = nowPlayingMessages(env.text);
+  assert.ok(buttonsOf(old.edits.at(-1)).every((b) => b.disabled === true));
+  assert.equal(other.messages.length, 1);
+  assert.ok(buttonsOf(other.messages[0].payload).every((b) => !b.disabled));
+});
+
+test('postNowPlaying with nothing playing returns false and posts nothing', async () => {
+  const env = setup();
+  const other = fakeTextChannel('bottom');
+  assert.equal(await env.player.postNowPlaying(other), false);
+  assert.equal(other.messages.length, 0);
+});
+
+test('leaving voice disables the last Now-playing message', async () => {
+  const env = setup();
+  await playing(env, [t('t1')]);
+  env.player.stop();
+  await settle();
+
+  const [msg] = nowPlayingMessages(env.text);
+  assert.ok(buttonsOf(msg.edits.at(-1)).every((b) => b.disabled === true));
+});
+
+test('a message that can no longer be edited does not break playback', async () => {
+  const env = setup({ failEdits: true });
+  await playing(env, [t('t1'), t('t2')]);
+
+  env.audio.idle(); // disabling t1's message rejects
+  await settle();
+  await env.player.refreshNowPlaying();
+  env.player.stop();
+  await settle();
+
+  assert.equal(env.player.channelId, null);
 });
 
 mock.reset();
