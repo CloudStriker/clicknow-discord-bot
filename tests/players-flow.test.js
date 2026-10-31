@@ -30,7 +30,7 @@ function makeDeps(overrides = {}) {
     subscribePlain() {},
   };
   const fakeResource = {
-    volumeTransformer: {
+    volume: {
       setVolumeCalls: [],
       setVolume(v) {
         this.setVolumeCalls.push(v);
@@ -146,7 +146,7 @@ test('volume is applied through a fetched stream, not a URL string', async () =>
   // ("Cannot read properties of undefined (reading 'setVolume')").
   const input = env.deps.recordedResourceInput();
   assert.ok(typeof input !== 'string', 'resource input must not be a raw URL');
-  assert.deepEqual(env.deps.fakeResource.volumeTransformer.setVolumeCalls, [1]);
+  assert.deepEqual(env.deps.fakeResource.volume.setVolumeCalls, [1]);
 });
 
 test('leaving voice (kick / auto-leave) never drains the queue into a dead connection', async () => {

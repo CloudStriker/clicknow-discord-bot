@@ -140,9 +140,8 @@ export class GuildPlayer {
   /** Set volume for this guild (1–100); applies live when music is playing. */
   setVolume(percent) {
     this.#settings.set(this.guildId, { volume: percent });
-    if (this.#resource?.volumeTransformer) {
-      this.#resource.volumeTransformer.setVolume(percent / 100);
-    }
+    const live = this.#resource?.volume ?? this.#resource?.volumeTransformer;
+    live?.setVolume(percent / 100); // no-op silently when nothing is playing
   }
 
   /** Called by src/index.js on every voice-state update in this guild. */
@@ -262,8 +261,13 @@ export class GuildPlayer {
       const body = await this.#deps.fetchStream(streamUrl);
 
       const resource = this.#deps.createAudioResource(body, { inlineVolume: true });
-      const volumePct = this.#settings.get(this.guildId).volume;
-      resource.volumeTransformer.setVolume(volumePct / 100);
+
+      // @discordjs/voice renamed the live volume property: v0.18 exposes
+      // `resource.volume` (was `resource.volumeTransformer` in earlier
+      // versions). Support both so future upgrades stay painless.
+      const volumeControl = resource.volume ?? resource.volumeTransformer;
+      if (!volumeControl) throw new YtDlpError('Volume transformer missing from the audio pipeline');
+      volumeControl.setVolume(this.#settings.get(this.guildId).volume / 100);
 
       this.#resource = resource;
       this.#audio?.play(resource);
