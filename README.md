@@ -17,6 +17,8 @@ any small Linux server with Docker, so there are no premium tiers, ads or usage 
 ## What it does
 
 - 🎵 **Plays music from YouTube** using a song name, a video link or a whole playlist.
+- ⏯️ **Interactive playback buttons & controls** on the Now-playing message: Pause/Resume, Skip, Stop, Loop mode, and quick Queue lookup.
+- 🔂 **Looping & Queue management.** Loop the current song, loop the whole queue, shuffle, remove individual tracks by position, or clear the queue.
 - 📜 **Keeps a queue** of up to 100 songs per server, so everyone can add songs.
 - 📋 **Imports playlists.** Paste a playlist link and choose 20, 50 or 100 songs.
 - 🔊 **Remembers volume and settings** separately for each server, even after a restart.
@@ -35,16 +37,35 @@ Type `/` in any channel of a server where the bot is installed to see these comm
 |---|---|
 | `/play <song name or link>` | Plays a song, or adds it to the queue if something is already playing. Accepts search words, a YouTube video link or a playlist link. |
 | `/play <playlist link> grab_limit:50` | Takes the first 20 (default), 50 or 100 songs from a playlist. |
-| `/skip` | Skips to the next song. |
+| `/pause` | Pauses playback of the current track. |
+| `/resume` | Resumes playback of the paused track. |
+| `/skip` | Skips to the next song in the queue. |
 | `/stop` | Stops the music, clears the queue and leaves the voice channel. |
-| `/queue` | Shows what's playing now and what's coming next. |
+| `/loop <off\|track\|queue>` | Sets loop mode: `track` repeats current song, `queue` rotates the queue, `off` plays normally. |
+| `/queue [page]` | Shows what's playing now and upcoming songs (10 songs per page). |
+| `/nowplaying` | Posts a fresh Now-playing message with interactive control buttons. |
+| `/shuffle` | Shuffles the waiting songs in the queue. |
+| `/remove <position>` | Removes a waiting song by its position number in `/queue`. |
+| `/clear` | Clears all waiting songs from the queue while keeping the current song playing. |
 | `/volume <1–100>` | Sets the volume for this server. It is saved and takes effect from the next song. |
 | `/settings` | Shows or changes the auto-leave setting (on/off) and the idle timeout (1–30 minutes). |
 | `/help` | Lists all commands. |
 
-> 💡 You must be **in a voice channel** before using `/play`. The bot joins the channel you are in.
+> 💡 You must be **in a voice channel** before using `/play` or playback controls. The bot joins the channel you are in.
 > To change how loud the bot is **for you only**, right-click the bot in the voice channel
 > and use **User Volume**.
+
+## Interactive Controls
+
+Every time a song starts playing (or when you use `/nowplaying`), the bot posts a Now-playing message with interactive buttons:
+
+- ⏯️ **Pause / Resume:** Toggles playback. While paused, the idle leave timer counts down so the bot won't sit idle forever.
+- ⏭️ **Skip:** Skips immediately to the next song in the queue.
+- ⏹️ **Stop:** Stops playback, clears the queue, disables the buttons, and leaves voice.
+- 🔁 **Loop:** Cycles loop mode (`off` → `track` → `queue` → `off`). The button label updates to reflect the active mode.
+- 📜 **Queue:** Displays page 1 of the queue in a private (ephemeral) message only you can see.
+
+> 👥 **No DJ role needed:** Everyone in the bot's voice channel can click the buttons or use control commands.
 
 ---
 
@@ -119,7 +140,7 @@ docker compose up -d --build   # build and start; restarts automatically after r
 docker compose logs -f         # watch it start (Ctrl+C stops watching, the bot keeps running)
 ```
 
-When the logs show `✅ Logged in as …` and `✅ 7 slash command(s) registered`, go to
+When the logs show `✅ Logged in as …` and `✅ 14 slash command(s) registered`, go to
 Discord, join a voice channel and type `/play never gonna give you up` 🎉
 
 The slash commands register automatically every time the bot starts. The very first

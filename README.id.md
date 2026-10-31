@@ -13,6 +13,8 @@ iklan, atau batas pemakaian.
 ## Apa yang bisa dilakukan
 
 - 🎵 **Memutar musik dari YouTube** lewat judul lagu, link video, atau satu playlist.
+- ⏯️ **Tombol kontrol interaktif** pada pesan Now-playing: Pause/Resume, Skip, Stop, Loop, dan intip Antrean.
+- 🔂 **Looping & Manajemen antrean.** Putar ulang lagu saat ini, putar ulang seluruh antrean, acak (shuffle), hapus lagu tertentu, atau bersihkan antrean.
 - 📜 **Antrean lagu** sampai 100 lagu per server, jadi semua orang bisa menambah lagu.
 - 📋 **Mengambil playlist.** Tempel link playlist, lalu pilih 20, 50, atau 100 lagu.
 - 🔊 **Mengingat volume dan pengaturan** tiap server, bahkan setelah bot restart.
@@ -32,16 +34,35 @@ perintah-perintah berikut.
 |---|---|
 | `/play <judul atau link>` | Memutar lagu, atau menambahkannya ke antrean kalau sedang ada lagu. Bisa pakai kata kunci, link video YouTube, atau link playlist. |
 | `/play <link playlist> grab_limit:50` | Mengambil 20 (bawaan), 50, atau 100 lagu pertama dari playlist. |
-| `/skip` | Lanjut ke lagu berikutnya. |
+| `/pause` | Menjeda (pause) pemutaran lagu saat ini. |
+| `/resume` | Melanjutkan (resume) pemutaran lagu yang dijeda. |
+| `/skip` | Lanjut ke lagu berikutnya dalam antrean. |
 | `/stop` | Menghentikan musik, mengosongkan antrean, dan keluar dari voice channel. |
-| `/queue` | Menampilkan lagu yang sedang diputar dan lagu berikutnya. |
+| `/loop <off\|track\|queue>` | Mengatur mode loop: `track` mengulang lagu saat ini, `queue` memutar ulang antrean, `off` normal. |
+| `/queue [page]` | Menampilkan lagu yang sedang diputar dan daftar antrean (10 lagu per halaman). |
+| `/nowplaying` | Menampilkan pesan Now-playing baru lengkap dengan tombol kontrol interaktif. |
+| `/shuffle` | Mengacak urutan lagu-lagu yang sedang menunggu di antrean. |
+| `/remove <position>` | Menghapus lagu tertentu dari antrean berdasarkan nomor posisinya di `/queue`. |
+| `/clear` | Mengosongkan antrean lagu yang menunggu tanpa menghentikan lagu yang sedang diputar. |
 | `/volume <1–100>` | Mengatur volume untuk server ini. Disimpan, dan berlaku mulai lagu berikutnya. |
 | `/settings` | Melihat atau mengubah pengaturan keluar otomatis (on/off) dan batas waktu diam (1–30 menit). |
 | `/help` | Menampilkan semua perintah. |
 
-> 💡 Kamu harus **sudah berada di voice channel** sebelum memakai `/play`. Bot akan masuk
+> 💡 Kamu harus **sudah berada di voice channel** sebelum memakai `/play` atau tombol kontrol. Bot akan masuk
 > ke channel tempat kamu berada. Untuk mengatur keras-pelannya bot **khusus untukmu**,
 > klik kanan bot di voice channel lalu atur **User Volume**.
+
+## Tombol Kontrol Interaktif
+
+Setiap kali lagu baru mulai diputar (atau saat memakai `/nowplaying`), bot akan mengirim pesan Now-playing dengan tombol:
+
+- ⏯️ **Pause / Resume:** Menjeda atau melanjutkan pemutaran. Saat dijeda, timer auto-leave tetap berjalan agar bot tidak diam selamanya.
+- ⏭️ **Skip:** Langsung melewati lagu dan memutar lagu berikutnya.
+- ⏹️ **Stop:** Menghentikan pemutaran, mengosongkan antrean, mematikan tombol, dan bot keluar dari voice.
+- 🔁 **Loop:** Mengubah mode loop secara berurutan (`off` → `track` → `queue` → `off`). Label tombol langsung berubah sesuai status aktif.
+- 📜 **Queue:** Menampilkan halaman 1 antrean secara privat (ephemeral) hanya untukmu.
+
+> 👥 **Bebas untuk semua:** Tidak perlu role DJ khusus; siapa pun yang berada di voice channel bot bisa menekan tombol kontrol.
 
 ---
 
@@ -115,7 +136,7 @@ docker compose up -d --build   # build lalu jalankan; otomatis menyala lagi sete
 docker compose logs -f         # lihat proses start (Ctrl+C hanya berhenti melihat, bot tetap jalan)
 ```
 
-Kalau di log muncul `✅ Logged in as …` dan `✅ 7 slash command(s) registered`, buka
+Kalau di log muncul `✅ Logged in as …` dan `✅ 14 slash command(s) registered`, buka
 Discord, masuk ke voice channel, lalu ketik `/play never gonna give you up` 🎉
 
 Perintah slash terdaftar otomatis setiap kali bot menyala. Saat pertama kali, Discord
