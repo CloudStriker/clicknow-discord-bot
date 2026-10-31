@@ -165,6 +165,7 @@ Per-server settings (volume, auto-leave, timeout) are saved in `data/settings.js
 | Logs show `TokenInvalid` | You pasted the wrong value. Reset the token in the **Bot** tab and paste it again, without quotes. |
 | `/play` doesn't appear in Discord | Wait a few minutes after the first start. If it still doesn't appear, invite the bot again with the `applications.commands` scope. |
 | "Join a voice channel first" | Join a voice channel, then use `/play`. |
+| 🔒 "I don't have permission to play in …" (private channels) | Open the voice channel's settings → **Permissions** → add the bot (or its role) and allow **View Channel**, **Connect** and **Speak**. |
 | A song is skipped with "Couldn't play" | Run `docker compose restart` to update yt-dlp. If the logs mention signing in, see [YouTube cookies](#youtube-cookies-only-if-needed). |
 | The bot is in voice but silent | Set `VOICE_DEBUG=1` in `.env`, run `docker compose up -d` and check the logs. |
 | The bot shows as offline | Run `docker compose ps`, then `docker compose logs --tail 50`. |

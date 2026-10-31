@@ -162,6 +162,7 @@ Pengaturan per server (volume, keluar otomatis, batas waktu) disimpan di
 | Log menunjukkan `TokenInvalid` | Nilai yang ditempel salah. Reset token di tab **Bot** dan tempel lagi, tanpa tanda kutip. |
 | `/play` tidak muncul di Discord | Tunggu beberapa menit setelah start pertama. Kalau tetap tidak muncul, undang ulang bot dengan scope `applications.commands`. |
 | "Join a voice channel first" | Masuk ke voice channel dulu, lalu pakai `/play`. |
+| 🔒 "I don't have permission to play in …" (voice private) | Buka pengaturan voice channel → **Permissions** → tambahkan bot (atau role-nya) dan izinkan **View Channel**, **Connect**, dan **Speak**. |
 | Lagu dilewati dengan pesan "Couldn't play" | Jalankan `docker compose restart` untuk memperbarui yt-dlp. Kalau log menyebut soal sign in, lihat [Cookies YouTube](#cookies-youtube-hanya-kalau-perlu). |
 | Bot ada di voice tapi tidak bersuara | Isi `VOICE_DEBUG=1` di `.env`, jalankan `docker compose up -d`, lalu periksa log. |
 | Bot terlihat offline | Jalankan `docker compose ps`, lalu `docker compose logs --tail 50`. |

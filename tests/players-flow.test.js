@@ -46,6 +46,7 @@ function makeDeps(overrides = {}) {
       destroy() {},
     }),
     createAudioPlayer: () => fakePlayer,
+    waitReady: async () => {}, // the fake connection is ready immediately
     /**
      * New seam: one call builds the whole native ffmpeg pipeline for a track.
      * Fakes record what they were asked for.

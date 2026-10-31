@@ -30,11 +30,59 @@ import {
   VoiceConnectionStatus,
 } from '@discordjs/voice';
 
+import { PermissionFlagsBits } from 'discord.js';
+
 import { Queue } from './queue.js';
 import { getStreamUrl, YtDlpError } from './ytdlp.js';
 
 /** Set VOICE_DEBUG=1 in .env to log the voice handshake and player states. */
 const VOICE_DEBUG = process.env.VOICE_DEBUG === '1';
+
+/** How long a voice connection may take to become ready before we give up. */
+const VOICE_READY_TIMEOUT_MS = 20_000;
+
+/** A join that cannot work; `message` is shown to the user as-is. */
+export class VoiceJoinError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'VoiceJoinError';
+  }
+}
+
+const REQUIRED_VOICE_PERMISSIONS = [
+  [PermissionFlagsBits.ViewChannel, 'View Channel'],
+  [PermissionFlagsBits.Connect, 'Connect'],
+  [PermissionFlagsBits.Speak, 'Speak'],
+];
+
+/**
+ * Why the bot cannot play in this voice channel, or null if it can.
+ *
+ * Discord does not report a failed join: without these permissions (typical
+ * for private channels) the connection just never comes up. So we check
+ * first and tell the user exactly what to fix.
+ */
+export function voicePermissionProblem(channel) {
+  const me = channel.guild?.members?.me;
+  const perms = me ? channel.permissionsFor?.(me) : null;
+  if (!perms) return null; // cannot tell — let the join (and its timeout) decide
+
+  const missing = REQUIRED_VOICE_PERMISSIONS.filter(([flag]) => !perms.has(flag)).map(
+    ([, name]) => name,
+  );
+  if (missing.length > 0) {
+    return (
+      `I don't have permission to play in **${channel.name ?? 'this channel'}** ` +
+      `(missing: ${missing.join(', ')}). Ask an admin to open the channel's ` +
+      'settings → Permissions → add the bot (or its role) and allow ' +
+      'View Channel, Connect and Speak.'
+    );
+  }
+  if (channel.full && !perms.has(PermissionFlagsBits.MoveMembers)) {
+    return `**${channel.name ?? 'This channel'}** is full. Make room or raise its user limit.`;
+  }
+  return null;
+}
 
 /**
  * Build a playable resource for one Track with a single native ffmpeg
@@ -87,6 +135,8 @@ export const defaultDeps = {
   createAudioPlayer,
   getStreamUrl,
   makeAudioResource,
+  waitReady: (connection) =>
+    entersState(connection, VoiceConnectionStatus.Ready, VOICE_READY_TIMEOUT_MS),
 };
 
 const REAL_DEPS = defaultDeps;
@@ -132,10 +182,25 @@ export class GuildPlayer {
       throw new Error('NOT_IN_VOICE'); // commands turn this into a friendly reply
     }
 
+    const problem = voicePermissionProblem(memberChannel);
+    if (problem) throw new VoiceJoinError(problem);
+
     this.#notifyChannel = interaction.channel;
     this.#clearSilenceTimer();
 
     const joinedHere = await this.#ensureVoice(memberChannel);
+    if (joinedHere) {
+      try {
+        await this.#deps.waitReady(this.#connection);
+      } catch {
+        console.warn(`[${this.guildId}] voice connection to ${memberChannel.id} never became ready`);
+        this.#teardown();
+        throw new VoiceJoinError(
+          "I couldn't connect to your voice channel within 20 seconds. " +
+            'Check that I can View Channel, Connect and Speak there, then try again.',
+        );
+      }
+    }
     const wasIdle = !this.#current;
     const added = this.queue.pushAll(tracks);
 

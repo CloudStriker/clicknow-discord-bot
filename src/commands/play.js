@@ -1,5 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 
+import { VoiceJoinError, voicePermissionProblem } from '../players.js';
 import { classifyInput, discover } from '../ytdlp.js';
 
 /** /play <query> — search text, a video URL, or a playlist URL. */
@@ -25,8 +26,17 @@ export default {
     ),
 
   async execute(interaction, ctx) {
-    if (!interaction.member?.voice?.channel) {
+    const voiceChannel = interaction.member?.voice?.channel;
+    if (!voiceChannel) {
       await interaction.reply('Join a voice channel first, then use /play 🙂');
+      return;
+    }
+
+    // Fail fast (before the YouTube lookup) when the bot can't join, e.g. a
+    // private channel that doesn't allow the bot.
+    const problem = voicePermissionProblem(voiceChannel);
+    if (problem) {
+      await interaction.reply(`🔒 ${problem}`);
       return;
     }
 
@@ -56,7 +66,16 @@ export default {
       return;
     }
 
-    const result = await ctx.players.enqueue(interaction, tracks);
+    let result;
+    try {
+      result = await ctx.players.enqueue(interaction, tracks);
+    } catch (err) {
+      if (err instanceof VoiceJoinError) {
+        await interaction.editReply(`🔒 ${err.message}`);
+        return;
+      }
+      throw err;
+    }
     await interaction.editReply(
       ctx.players.for(interaction.guildId).describeEnqueueResult(tracks, result) +
         (result.added > 1 ? ` (queue: ${result.queueLength})` : ''),
