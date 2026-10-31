@@ -52,6 +52,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const command = commands.find((c) => c.data.name === interaction.commandName);
   if (!command) return;
 
+  const args = interaction.options.data.map((o) => `${o.name}=${o.value}`).join(' ');
+  console.log(`[/${interaction.commandName}] ${args} (by ${interaction.user.tag})`);
+
   try {
     await command.execute(interaction, ctx);
   } catch (err) {

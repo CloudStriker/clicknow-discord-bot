@@ -33,6 +33,9 @@ import {
 import { Queue } from './queue.js';
 import { getStreamUrl, YtDlpError } from './ytdlp.js';
 
+/** Set VOICE_DEBUG=1 in .env to log the voice handshake and player states. */
+const VOICE_DEBUG = process.env.VOICE_DEBUG === '1';
+
 /**
  * Build a playable resource for one Track with a single native ffmpeg
  * process: download → volume filter → libopus encode → Ogg. The voice
@@ -63,6 +66,11 @@ async function makeAudioResource(streamUrl, volumePct) {
   );
   ffmpeg.stderr.on('data', (d) => console.warn(`[ffmpeg] ${String(d).trim()}`));
   ffmpeg.on('error', (err) => console.error(`[ffmpeg] failed to start: ${err.message}`));
+  const startedAt = Date.now();
+  ffmpeg.on('close', (code, signal) => {
+    const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
+    console.log(`[ffmpeg] exited code=${code} signal=${signal ?? '-'} after ${secs}s`);
+  });
 
   const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.OggOpus });
   return { resource, kill: () => ffmpeg.kill('SIGKILL') };
@@ -220,7 +228,17 @@ export class GuildPlayer {
       guildId: this.guildId,
       adapterCreator: channel.guild.voiceAdapterCreator,
       selfDeaf: true,
+      debug: VOICE_DEBUG,
     });
+
+    if (VOICE_DEBUG) {
+      // Diagnostics for "bot shows the green ring but nobody hears it":
+      // logs the voice handshake (incl. DAVE/E2EE) and player state changes.
+      const tag = `[${this.guildId}][voice]`;
+      this.#connection.on('debug', (m) => console.log(`${tag} ${m}`));
+      this.#connection.on('stateChange', (a, b) => console.log(`${tag} ${a.status} -> ${b.status}`));
+      this.#connection.on('error', (e) => console.error(`${tag} error: ${e.message}`));
+    }
 
     // Discord sometimes drops us (router change, server migration):
     // try to rejoin once, then give up cleanly.
@@ -235,8 +253,13 @@ export class GuildPlayer {
       }
     });
 
-    this.#audio = this.#deps.createAudioPlayer();
+    this.#audio = this.#deps.createAudioPlayer({ debug: VOICE_DEBUG });
     this.#connection.subscribe(this.#audio);
+
+    if (VOICE_DEBUG) {
+      const tag = `[${this.guildId}][player]`;
+      this.#audio.on('debug', (m) => console.log(`${tag} ${m}`));
+    }
 
     // Track ended naturally → play the next one.
     this.#audio.on(AudioPlayerStatus.Idle, () => {
