@@ -12,6 +12,7 @@ import { config } from './config.js';
 import { SettingsStore } from './settings.js';
 import { GuildPlayers } from './players.js';
 import { commands, createCtx } from './commands/index.js';
+import { handleControlButton } from './buttons.js';
 
 // ── managers ──────────────────────────────────────────────────────────
 const client = new Client({
@@ -47,6 +48,17 @@ client.once(Events.ClientReady, async (ready) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isButton() && interaction.customId.startsWith('ctl:')) {
+    console.log(`[button:${interaction.customId}] (by ${interaction.user.tag})`);
+    try {
+      await handleControlButton(interaction, ctx);
+    } catch (err) {
+      console.error(`[button:${interaction.customId}]`, err);
+      await safeReply(interaction, 'Something went wrong — check the server logs.');
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const command = commands.find((c) => c.data.name === interaction.commandName);
