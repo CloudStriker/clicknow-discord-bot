@@ -17,6 +17,8 @@ export default {
   async execute(interaction, ctx) {
     const level = interaction.options.getInteger('level', true);
     ctx.players.setVolume(interaction.guildId, level); // saved per guild
-    await interaction.reply(`🔊 Volume set to **${level}%** (saved for this server).`);
+    await interaction.reply(
+      `🔊 Volume set to **${level}%** (saved for this server) — applies from the next track.`,
+    );
   },
 };

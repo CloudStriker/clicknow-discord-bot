@@ -30,14 +30,14 @@ function makeDeps(overrides = {}) {
     subscribePlain() {},
   };
   const fakeResource = {
-    volume: {
+    volumeTransformer: {
       setVolumeCalls: [],
       setVolume(v) {
         this.setVolumeCalls.push(v);
       },
     },
   };
-  let resourceInput;
+  const madeResource = [];
 
   const deps = {
     joinVoiceChannel: () => ({
@@ -46,15 +46,21 @@ function makeDeps(overrides = {}) {
       destroy() {},
     }),
     createAudioPlayer: () => fakePlayer,
-    createAudioResource(input) {
-      resourceInput = input;
-      return fakeResource;
+    /**
+     * New seam: one call builds the whole native ffmpeg pipeline for a track.
+     * Fakes record what they were asked for.
+     */
+    makeAudioResource: async (streamUrl, volumePct) => {
+      const record = { streamUrl, volumePct, resource: fakeResource, killCalled: false };
+      record.kill = () => {
+        record.killCalled = true;
+      };
+      madeResource.push(record);
+      return { resource: fakeResource, kill: record.kill };
     },
-    fetchStream: async () => ({ marker: 'stream-body' }), // non-string input
-    recordedResourceInput() {
-      return resourceInput;
+    madeResource() {
+      return madeResource.at(-1);
     },
-    fakeResource,
     getStreamUrl: async () => ({ streamUrl: 'https://stream', title: 'resolved' }),
     eventPlayer: fakePlayer,
     sent,
@@ -133,20 +139,16 @@ test('a stream error mid-play advances exactly one track (no double-advance)', a
   assert.equal(player.queue.length, 0);
 });
 
-test('volume is applied through a fetched stream, not a URL string', async () => {
+test('playback uses ffmpeg-native volume (no JS opus encoder in the loop)', async () => {
   const env = makeDeps();
   const player = makePlayer(env);
 
   await player.enqueue(env.fakeInteraction, [track('t1')]);
   await new Promise((r) => setImmediate(r)); // playNext resolves async
 
-  // With ffmpeg optimizations enabled (@discordjs/voice >= 0.16), a STRING
-  // input gets routed down the FFmpeg→OggOpus pipeline, which has NO
-  // volume transformer — that made /volume crash in production
-  // ("Cannot read properties of undefined (reading 'setVolume')").
-  const input = env.deps.recordedResourceInput();
-  assert.ok(typeof input !== 'string', 'resource input must not be a raw URL');
-  assert.deepEqual(env.deps.fakeResource.volume.setVolumeCalls, [1]);
+  const made = env.deps.madeResource();
+  assert.equal(made.streamUrl, 'https://stream');
+  assert.equal(made.volumePct, 100, 'ffmpeg receives the guild volume as a filter value');
 });
 
 test('leaving voice (kick / auto-leave) never drains the queue into a dead connection', async () => {
@@ -170,4 +172,21 @@ test('leaving voice (kick / auto-leave) never drains the queue into a dead conne
   await new Promise((r) => setImmediate(r));
 
   assert.equal(player.nowPlaying, null, 'no headless advance after leaving');
+});
+
+test('teardown kills the native ffmpeg process on leave', async () => {
+  const env = makeDeps();
+  const player = makePlayer(env);
+
+  await player.enqueue(env.fakeInteraction, [track('t1')]);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(env.deps.madeResource().killCalled, false);
+
+  // the bot is kicked from voice
+  player.onVoiceUpdate(
+    { memberId: 'x', channelId: 'voice-channel-1' },
+    { member: { id: 'bot-user-1' }, guild: { id: 'guild-1' }, channelId: null },
+  );
+
+  assert.equal(env.deps.madeResource().killCalled, true, 'ffmpeg process is killed');
 });

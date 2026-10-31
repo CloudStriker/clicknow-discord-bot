@@ -18,7 +18,7 @@
 // constructor argument (tests use fakes; production passes nothing and
 // gets the real ones).
 
-import { Readable } from 'node:stream';
+import { spawn } from 'node:child_process';
 
 import {
   createAudioPlayer,
@@ -26,11 +26,47 @@ import {
   entersState,
   joinVoiceChannel,
   AudioPlayerStatus,
+  StreamType,
   VoiceConnectionStatus,
 } from '@discordjs/voice';
 
 import { Queue } from './queue.js';
 import { getStreamUrl, YtDlpError } from './ytdlp.js';
+
+/**
+ * Build a playable resource for one Track with a single native ffmpeg
+ * process: download → volume filter → libopus encode → Ogg. The voice
+ * library only demuxes the Ogg (cheap), so no JavaScript Opus encoder runs
+ * in the realtime loop. (The pure-JS opusscript encoder was too slow under
+ * the container's 0.25-vCPU limit: frames arrived late, Discord heard
+ * nothing, Node logged "TimeoutNegativeWarning".)
+ *
+ * Volume is baked into the ffmpeg filter, so /volume applies from the next
+ * Track on.
+ *
+ * @returns {Promise<{resource: import('@discordjs/voice').AudioResource, kill: () => void}>}
+ */
+async function makeAudioResource(streamUrl, volumePct) {
+  const ffmpeg = spawn(
+    'ffmpeg',
+    [
+      '-hide_banner', '-loglevel', 'error',
+      // YouTube CDN connections sometimes drop mid-song; let ffmpeg resume
+      '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+      '-i', streamUrl,
+      '-vn',
+      '-af', `volume=${(volumePct / 100).toFixed(2)}`,
+      '-c:a', 'libopus', '-b:a', '128k', '-ar', '48000', '-ac', '2',
+      '-f', 'ogg', 'pipe:1',
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  ffmpeg.stderr.on('data', (d) => console.warn(`[ffmpeg] ${String(d).trim()}`));
+  ffmpeg.on('error', (err) => console.error(`[ffmpeg] failed to start: ${err.message}`));
+
+  const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.OggOpus });
+  return { resource, kill: () => ffmpeg.kill('SIGKILL') };
+}
 
 /**
  * The real voice/yt-dlp seams (tests inject fakes via the 5th constructor arg).
@@ -41,18 +77,8 @@ import { getStreamUrl, YtDlpError } from './ytdlp.js';
 export const defaultDeps = {
   joinVoiceChannel,
   createAudioPlayer,
-  createAudioResource,
   getStreamUrl,
-  /** Wrap a CDN stream URL in a Node readable (see #playNext why). */
-  fetchStream: async (streamUrl) => {
-    const response = await fetch(streamUrl, {
-      headers: { 'user-agent': 'discord-music-bot/1.0' },
-    });
-    if (!response.ok || !response.body) {
-      throw new YtDlpError(`Audio stream fetch failed (HTTP ${response.status})`);
-    }
-    return Readable.fromWeb(response.body);
-  },
+  makeAudioResource,
 };
 
 const REAL_DEPS = defaultDeps;
@@ -140,8 +166,8 @@ export class GuildPlayer {
   /** Set volume for this guild (1–100); applies live when music is playing. */
   setVolume(percent) {
     this.#settings.set(this.guildId, { volume: percent });
-    const live = this.#resource?.volume ?? this.#resource?.volumeTransformer;
-    live?.setVolume(percent / 100); // no-op silently when nothing is playing
+    // Volume is an ffmpeg filter (see makeAudioResource): the saved value
+    // takes effect from the next Track.
   }
 
   /** Called by src/index.js on every voice-state update in this guild. */
@@ -241,6 +267,7 @@ export class GuildPlayer {
 
     const next = this.queue.shift();
     if (!next) {
+      this.#killFfmpeg();
       this.#current = null;
       this.#resource = null;
       this.#startSilenceTimer(); // queue went silent — respect /settings
@@ -252,23 +279,15 @@ export class GuildPlayer {
       const { streamUrl, title } = await this.#deps.getStreamUrl(next.url, this.#config);
       if (session !== this.#session) return; // we left while resolving — drop it
 
-      // IMPORTANT: the audio goes through fetch()/createAudioResource as a
-      // real stream, never as a URL string. @discordjs/voice optimizes
-      // string inputs straight to FFmpeg→OggOpus (when ffmpeg has libopus),
-      // and that pipeline has no volume transformer — with /volume there
-      // that would crash on resource.volumeTransformer.setVolume. A stream
-      // input is constrained to the FFmpeg→PCM→VolumeTransformer→Opus path.
-      const body = await this.#deps.fetchStream(streamUrl);
+      const volumePct = this.#settings.get(this.guildId).volume;
+      const { resource, kill } = await this.#deps.makeAudioResource(streamUrl, volumePct);
+      if (session !== this.#session) {
+        kill();
+        return;
+      }
 
-      const resource = this.#deps.createAudioResource(body, { inlineVolume: true });
-
-      // @discordjs/voice renamed the live volume property: v0.18 exposes
-      // `resource.volume` (was `resource.volumeTransformer` in earlier
-      // versions). Support both so future upgrades stay painless.
-      const volumeControl = resource.volume ?? resource.volumeTransformer;
-      if (!volumeControl) throw new YtDlpError('Volume transformer missing from the audio pipeline');
-      volumeControl.setVolume(this.#settings.get(this.guildId).volume / 100);
-
+      this.#killFfmpeg(); // the previous Track's process, if still alive
+      this.#killCurrent = kill;
       this.#resource = resource;
       this.#audio?.play(resource);
       this.#announceNowPlaying(next, title);
@@ -314,6 +333,7 @@ export class GuildPlayer {
    * Used when the bot is moving between channels in the same guild.
    */
   #teardown() {
+    this.#killFfmpeg();
     this.#current = null;
     this.#resource = null;
     this.#session += 1; // abandon any in-flight stream resolution
@@ -350,6 +370,11 @@ export class GuildPlayer {
     this.#silenceTimer.unref?.();
   }
 
+  #killFfmpeg() {
+    this.#killCurrent?.();
+    this.#killCurrent = null;
+  }
+
   #clearSilenceTimer() {
     if (this.#silenceTimer) {
       clearTimeout(this.#silenceTimer);
@@ -381,6 +406,7 @@ export class GuildPlayer {
   #manualStop;
   #silenceTimer;
   #session;
+  #killCurrent = null; // stops the current Track's ffmpeg process
 }
 
 function formatDuration(totalSeconds) {
