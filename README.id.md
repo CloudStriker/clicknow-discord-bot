@@ -130,6 +130,18 @@ docker compose down                         # matikan bot
 git pull && docker compose up -d --build    # perbarui ke versi terbaru
 ```
 
+### Apakah bot menyala lagi sendiri?
+
+Ya. `docker-compose.yaml` memakai `restart: unless-stopped`, jadi bot selalu menyala lagi,
+**kecuali kamu sendiri yang menghentikannya**.
+
+| Kejadian | Bot menyala lagi otomatis? |
+|---|---|
+| Bot crash | ✅ Ya |
+| Server reboot atau mati listrik | ✅ Ya, asalkan Docker menyala saat boot (`sudo systemctl enable docker`) |
+| Docker di-restart atau di-update | ✅ Ya |
+| Kamu menjalankan `docker compose stop` atau `docker compose down` | ❌ Tidak, bot tetap mati (walaupun server reboot) sampai kamu menjalankan `docker compose up -d` |
+
 ### Cookies YouTube (hanya kalau perlu)
 
 1. Ekspor cookies YouTube dengan ekstensi browser (misalnya "Get cookies.txt LOCALLY"),

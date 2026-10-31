@@ -134,6 +134,18 @@ docker compose down                         # stop the bot
 git pull && docker compose up -d --build    # update to the latest version
 ```
 
+### Does the bot start again by itself?
+
+Yes. `docker-compose.yaml` uses `restart: unless-stopped`, so the bot always comes back
+**unless you stopped it yourself**.
+
+| What happens | Bot comes back automatically? |
+|---|---|
+| The bot crashes | ✅ Yes |
+| The server reboots or loses power | ✅ Yes, as long as Docker starts at boot (`sudo systemctl enable docker`) |
+| Docker is restarted or updated | ✅ Yes |
+| You ran `docker compose stop` or `docker compose down` | ❌ No, it stays off (even after a reboot) until you run `docker compose up -d` |
+
 ### YouTube cookies (only if needed)
 
 1. Export your YouTube cookies with a browser extension (for example
