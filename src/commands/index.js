@@ -1,0 +1,24 @@
+// Command registry + the shared context every command receives.
+//
+// Adding a new command:
+//   1. create src/commands/<name>.js exporting { data, execute }
+//   2. add it to the `commands` array below
+//   3. run: npm run deploy-commands   (registers it with Discord)
+
+import play from './play.js';
+import skip from './skip.js';
+import stop from './stop.js';
+import queue from './queue.js';
+import volume from './volume.js';
+import settings from './settings.js';
+
+/** Every slash command, in the order Discord shows them hints for. */
+export const commands = [play, skip, stop, queue, volume, settings];
+
+/**
+ * The one object passed to every command's execute().
+ * Keeps commands decoupled from how managers are constructed (src/index.js).
+ */
+export function createCtx({ players, settings, config }) {
+  return { players, settings, config };
+}

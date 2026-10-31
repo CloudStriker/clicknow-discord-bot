@@ -80,6 +80,16 @@ export class GuildPlayer {
    * Skip the current Track. Returns false when there is nothing to skip.
    * Stop-message is handled by the caller (commands/skip.js).
    */
+  /** Track doing the playing right now, or null when idle. */
+  get nowPlaying() {
+    return this.#current;
+  }
+
+  /** The voice channel the bot sits in, or null when not in voice. */
+  get channelId() {
+    return this.#voiceChannelId;
+  }
+
   skip() {
     if (!this.#audio) return false;
     const hadSomething = Boolean(this.#current || this.queue.length > 0);
