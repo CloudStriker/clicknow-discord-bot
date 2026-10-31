@@ -1,7 +1,7 @@
 {
   "name": "clicknow-discord-bot",
   "version": "1.0.0",
-  "description": "Private Discord bot that plays YouTube audio in voice channels via slash commands",
+  "description": "Free, self-hosted Discord music bot that plays YouTube songs and playlists in voice channels (discord.js, yt-dlp, ffmpeg, Docker).",
   "type": "module",
   "main": "src/index.js",
   "engines": {
@@ -19,5 +19,20 @@
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
     "opusscript": "^0.1.1"
+  },
+  "keywords": [
+    "discord",
+    "discord-bot",
+    "discord-music-bot",
+    "music-bot",
+    "youtube",
+    "yt-dlp",
+    "discord.js",
+    "docker",
+    "self-hosted"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CloudStriker/clicknow-discord-bot.git"
   }
 }
