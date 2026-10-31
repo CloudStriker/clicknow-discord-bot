@@ -12,9 +12,31 @@ import stop from './stop.js';
 import queue from './queue.js';
 import volume from './volume.js';
 import settings from './settings.js';
+import pause from './pause.js';
+import resume from './resume.js';
+import nowplaying from './nowplaying.js';
+import shuffle from './shuffle.js';
+import remove from './remove.js';
+import clear from './clear.js';
+import loop from './loop.js';
 
 /** Every slash command, in the order Discord shows them hints for. */
-export const commands = [help, play, skip, stop, queue, volume, settings];
+export const commands = [
+  help,
+  play,
+  skip,
+  stop,
+  queue,
+  volume,
+  settings,
+  pause,
+  resume,
+  nowplaying,
+  shuffle,
+  remove,
+  clear,
+  loop,
+];
 
 /**
  * The one object passed to every command's execute().

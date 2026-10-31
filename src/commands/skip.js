@@ -1,4 +1,5 @@
 import { SlashCommandBuilder } from 'discord.js';
+import { botChannelProblem } from './guard.js';
 
 /** /skip — drop the current track, start the next one. */
 export default {
@@ -8,13 +9,9 @@ export default {
 
   async execute(interaction, ctx) {
     const player = ctx.players.for(interaction.guildId);
-
-    if ((interaction.member?.voice?.channelId ?? null) !== player.channelId) {
-      await interaction.reply(
-        player.channelId
-          ? "You're not in the bot's voice channel 🙂"
-          : 'Nothing is playing right now.',
-      );
+    const problem = botChannelProblem(interaction, player);
+    if (problem) {
+      await interaction.reply(problem);
       return;
     }
 

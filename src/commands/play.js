@@ -76,9 +76,13 @@ export default {
       }
       throw err;
     }
-    await interaction.editReply(
-      ctx.players.for(interaction.guildId).describeEnqueueResult(tracks, result) +
-        (result.added > 1 ? ` (queue: ${result.queueLength})` : ''),
-    );
+    const player = ctx.players.for(interaction.guildId);
+    let reply =
+      player.describeEnqueueResult(tracks, result) +
+      (result.added > 1 ? ` (queue: ${result.queueLength})` : '');
+    if (player.paused) {
+      reply += '\n⏸️ Playback is paused — press ▶️ to resume.';
+    }
+    await interaction.editReply(reply);
   },
 };
