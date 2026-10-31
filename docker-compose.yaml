@@ -14,7 +14,7 @@ services:
     build: .
     image: clicknow-discord-bot
     container_name: clicknow-discord-bot
-    restart: unless-stopped
+    restart: unless-stopped       # back after crashes/reboots, unless you ran `docker compose stop/down`
     env_file: .env
     volumes:
       - ./data:/app/data          # per-guild settings survive restarts
