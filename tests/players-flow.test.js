@@ -62,7 +62,6 @@ function makeDeps(overrides = {}) {
     madeResource() {
       return madeResource.at(-1);
     },
-    getStreamUrl: async () => ({ streamUrl: 'https://stream', title: 'resolved' }),
     eventPlayer: fakePlayer,
     sent,
     idleHandlers,
@@ -110,10 +109,10 @@ const track = (title, url) => ({ title, url: url ?? `https://youtu.be/${title}`,
 
 // ── RED: these failed before the guard fixes ──────────────────────────
 
-test('a track whose stream URL cannot be resolved is skipped and announced', async () => {
+test('a track whose audio cannot be downloaded is skipped and announced', async () => {
   const env = makeDeps({
-    getStreamUrl: async () => {
-      throw new YtDlpError('No playable audio found');
+    makeAudioResource: async () => {
+      throw new YtDlpError('yt-dlp exited with code 1');
     },
   });
   const player = makePlayer(env);
@@ -148,8 +147,26 @@ test('playback uses ffmpeg-native volume (no JS opus encoder in the loop)', asyn
   await new Promise((r) => setImmediate(r)); // playNext resolves async
 
   const made = env.deps.madeResource();
-  assert.equal(made.streamUrl, 'https://stream');
+  // The page URL goes straight to yt-dlp's own downloader: YouTube throttles
+  // plain HTTP reads of the media URL below realtime (seen live: 0.65x), so
+  // songs cut out after 1-2 s. yt-dlp's chunked download runs ~38x realtime.
+  assert.equal(made.streamUrl, 'https://youtu.be/t1');
   assert.equal(made.volumePct, 100, 'ffmpeg receives the guild volume as a filter value');
+});
+
+test('the audio player tolerates short network stalls instead of ending the song', () => {
+  let options;
+  const env = makeDeps({
+    createAudioPlayer(opts) {
+      options = opts;
+      return env.deps.eventPlayer;
+    },
+  });
+  const player = makePlayer(env);
+  return player.enqueue(env.fakeInteraction, [track('t1')]).then(() => {
+    // library default is 5 frames = 100 ms of no data before "song over"
+    assert.ok(options?.behaviors?.maxMissedFrames >= 250, 'at least 5 s of tolerance');
+  });
 });
 
 test('leaving voice (kick / auto-leave) never drains the queue into a dead connection', async () => {

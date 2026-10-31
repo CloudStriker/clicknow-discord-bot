@@ -33,7 +33,7 @@ import {
 import { PermissionFlagsBits } from 'discord.js';
 
 import { Queue } from './queue.js';
-import { getStreamUrl, YtDlpError } from './ytdlp.js';
+import { YtDlpError } from './ytdlp.js';
 
 /** Set VOICE_DEBUG=1 in .env to log the voice handshake and player states. */
 const VOICE_DEBUG = process.env.VOICE_DEBUG === '1';
@@ -84,45 +84,109 @@ export function voicePermissionProblem(channel) {
   return null;
 }
 
+/** Give up on a Track if no audio has arrived after this long. */
+const FIRST_AUDIO_TIMEOUT_MS = 45_000;
+
 /**
- * Build a playable resource for one Track with a single native ffmpeg
- * process: download → volume filter → libopus encode → Ogg. The voice
- * library only demuxes the Ogg (cheap), so no JavaScript Opus encoder runs
- * in the realtime loop. (The pure-JS opusscript encoder was too slow under
- * the container's 0.25-vCPU limit: frames arrived late, Discord heard
- * nothing, Node logged "TimeoutNegativeWarning".)
+ * Build a playable resource for one Track:
  *
- * Volume is baked into the ffmpeg filter, so /volume applies from the next
- * Track on.
+ *   yt-dlp (downloads the audio) → ffmpeg (volume + libopus → Ogg) → voice
  *
+ * yt-dlp does the downloading because YouTube throttles plain HTTP reads of
+ * the media URL to below realtime for many videos (measured 0.65x), which
+ * made songs stop after 1–2 s. yt-dlp's chunked downloader ran ~38x realtime
+ * on the same video. ffmpeg encodes Opus natively, so no JavaScript encoder
+ * runs in the realtime loop (opusscript was too slow at 0.25 vCPU).
+ *
+ * Resolves once the first audio bytes arrive, so "Now playing" is only
+ * announced for audio that really plays. Rejects with a YtDlpError if
+ * yt-dlp fails first. Volume is baked into the ffmpeg filter, so /volume
+ * applies from the next Track on.
+ *
+ * @param {string} pageUrl  the Track's YouTube page URL
+ * @param {number} volumePct  1–100
+ * @param {{cookiesFile?: string|null, ytDlpPath?: string}} cfg
  * @returns {Promise<{resource: import('@discordjs/voice').AudioResource, kill: () => void}>}
  */
-async function makeAudioResource(streamUrl, volumePct) {
+async function makeAudioResource(pageUrl, volumePct, cfg = {}) {
+  const ytArgs = ['--quiet', '--no-warnings', '--no-playlist', '-f', 'bestaudio/best', '-o', '-'];
+  if (cfg.cookiesFile) ytArgs.push('--cookies', cfg.cookiesFile);
+  ytArgs.push(pageUrl);
+  const ytdlp = spawn(cfg.ytDlpPath ?? 'yt-dlp', ytArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+
   const ffmpeg = spawn(
     'ffmpeg',
     [
       '-hide_banner', '-loglevel', 'error',
-      // YouTube CDN connections sometimes drop mid-song; let ffmpeg resume
-      '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-      '-i', streamUrl,
+      '-i', 'pipe:0',
       '-vn',
       '-af', `volume=${(volumePct / 100).toFixed(2)}`,
       '-c:a', 'libopus', '-b:a', '128k', '-ar', '48000', '-ac', '2',
       '-f', 'ogg', 'pipe:1',
     ],
-    { stdio: ['ignore', 'pipe', 'pipe'] },
+    { stdio: ['pipe', 'pipe', 'pipe'] },
   );
+  ytdlp.stdout.pipe(ffmpeg.stdin);
+  ffmpeg.stdin.on('error', () => {}); // EPIPE when the Track is skipped
+
+  let ytdlpStderr = '';
+  ytdlp.stderr.on('data', (d) => {
+    ytdlpStderr = (ytdlpStderr + d).slice(-2000);
+  });
   ffmpeg.stderr.on('data', (d) => console.warn(`[ffmpeg] ${String(d).trim()}`));
-  ffmpeg.on('error', (err) => console.error(`[ffmpeg] failed to start: ${err.message}`));
+  for (const [name, proc] of [['yt-dlp', ytdlp], ['ffmpeg', ffmpeg]]) {
+    proc.on('error', (err) => console.error(`[${name}] failed to start: ${err.message}`));
+  }
   const startedAt = Date.now();
   ffmpeg.on('close', (code, signal) => {
     const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
     console.log(`[ffmpeg] exited code=${code} signal=${signal ?? '-'} after ${secs}s`);
   });
+  ytdlp.on('close', (code) => {
+    if (code) console.warn(`[yt-dlp] exited code=${code}: ${ytdlpStderr.trim().slice(-300)}`);
+  });
+
+  const kill = () => {
+    ytdlp.kill('SIGKILL');
+    ffmpeg.kill('SIGKILL');
+  };
+
+  try {
+    await new Promise((resolve, reject) => {
+      const done = (fn, value) => {
+        clearTimeout(timer);
+        ffmpeg.stdout.off('readable', onAudio);
+        ytdlp.off('close', onYtdlpClose);
+        fn(value);
+      };
+      const onAudio = () => done(resolve);
+      const onYtdlpClose = (code) => {
+        if (code !== 0) {
+          done(reject, new YtDlpError(`yt-dlp exited with code ${code}`, ytdlpStderr));
+        }
+      };
+      const timer = setTimeout(
+        () => done(reject, new YtDlpError('No audio arrived in time', ytdlpStderr)),
+        FIRST_AUDIO_TIMEOUT_MS,
+      );
+      ffmpeg.stdout.once('readable', onAudio);
+      ytdlp.once('close', onYtdlpClose);
+    });
+  } catch (err) {
+    kill();
+    throw err;
+  }
 
   const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.OggOpus });
-  return { resource, kill: () => ffmpeg.kill('SIGKILL') };
+  return { resource, kill };
 }
+
+/**
+ * How many 20 ms frames may come up empty before the voice library treats a
+ * song as finished. The library default (5 = 100 ms) ended songs on every
+ * small network stall; 250 frames = 5 s of patience.
+ */
+const MAX_MISSED_FRAMES = 250;
 
 /**
  * The real voice/yt-dlp seams (tests inject fakes via the 5th constructor arg).
@@ -133,7 +197,6 @@ async function makeAudioResource(streamUrl, volumePct) {
 export const defaultDeps = {
   joinVoiceChannel,
   createAudioPlayer,
-  getStreamUrl,
   makeAudioResource,
   waitReady: (connection) =>
     entersState(connection, VoiceConnectionStatus.Ready, VOICE_READY_TIMEOUT_MS),
@@ -318,7 +381,10 @@ export class GuildPlayer {
       }
     });
 
-    this.#audio = this.#deps.createAudioPlayer({ debug: VOICE_DEBUG });
+    this.#audio = this.#deps.createAudioPlayer({
+      debug: VOICE_DEBUG,
+      behaviors: { maxMissedFrames: MAX_MISSED_FRAMES },
+    });
     this.#connection.subscribe(this.#audio);
 
     if (VOICE_DEBUG) {
@@ -364,12 +430,14 @@ export class GuildPlayer {
 
     this.#current = next;
     try {
-      const { streamUrl, title } = await this.#deps.getStreamUrl(next.url, this.#config);
-      if (session !== this.#session) return; // we left while resolving — drop it
-
       const volumePct = this.#settings.get(this.guildId).volume;
-      const { resource, kill } = await this.#deps.makeAudioResource(streamUrl, volumePct);
+      const { resource, kill } = await this.#deps.makeAudioResource(
+        next.url,
+        volumePct,
+        this.#config,
+      );
       if (session !== this.#session) {
+        // we left while the download was starting — drop it
         kill();
         return;
       }
@@ -378,7 +446,7 @@ export class GuildPlayer {
       this.#killCurrent = kill;
       this.#resource = resource;
       this.#audio?.play(resource);
-      this.#announceNowPlaying(next, title);
+      this.#announceNowPlaying(next, next.title);
     } catch (err) {
       if (session !== this.#session) return; // left while resolving — drop it
 

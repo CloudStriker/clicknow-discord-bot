@@ -41,7 +41,6 @@ function makePlayer({ waitReady = async () => {} } = {}) {
     },
     createAudioPlayer: () => ({ on() {}, play() {}, stop() {}, removeAllListeners() {} }),
     waitReady,
-    getStreamUrl: async () => ({ streamUrl: 'https://stream', title: 't' }),
     makeAudioResource: async () => ({ resource: {}, kill() {} }),
   };
   const player = new GuildPlayer(

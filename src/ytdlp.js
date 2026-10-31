@@ -160,20 +160,5 @@ export async function discover(classified, cfg) {
   return tracks;
 }
 
-/**
- * Get a directly playable audio URL for one Track, moments before it plays
- * (these URLs expire, so we never cache them).
- *
- * @param {string} webpageUrl  the Track's page URL
- * @param {{cookiesFile?: string|null, ytDlpPath?: string}} cfg
- * @returns {Promise<{streamUrl: string, title: string}>}
- */
-export async function getStreamUrl(webpageUrl, cfg) {
-  const stdout = await run(
-    { cookiesFile: cfg.cookiesFile, ytDlpPath: cfg.ytDlpPath },
-    ['-j', '--no-playlist', '-f', 'bestaudio/best', webpageUrl],
-  );
-  const [video] = parseYtDlpLines(stdout);
-  if (!video?.url) throw new YtDlpError('No playable audio found');
-  return { streamUrl: video.url, title: video.title ?? '(untitled)' };
-}
+// Audio itself is downloaded per Track by makeAudioResource() in
+// players.js (yt-dlp → ffmpeg), right before it plays.

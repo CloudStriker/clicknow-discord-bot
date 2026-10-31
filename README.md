@@ -183,7 +183,7 @@ Per-server settings (volume, auto-leave, timeout) are saved in `data/settings.js
                                         ▼
                     src/players.js  (one player per server: queue, timers)
                                         │
-             yt-dlp stream URL ──► ffmpeg (volume + Opus) ──► Discord voice (UDP, E2EE)
+             yt-dlp (download) ──► ffmpeg (volume + Opus) ──► Discord voice (UDP, E2EE)
 ```
 
 ```bash
