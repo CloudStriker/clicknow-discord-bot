@@ -1,9 +1,10 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 import { queuePageContent } from '../controls.js';
 
 /** /queue — what is playing and what comes next. */
 export default {
   data: new SlashCommandBuilder()
+    .setContexts(InteractionContextType.Guild)
     .setName('queue')
     .setDescription('Show the current track and the queue')
     .addIntegerOption((opt) =>

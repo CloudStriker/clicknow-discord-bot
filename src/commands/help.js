@@ -1,10 +1,11 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 
 import { commands } from './index.js';
 
 /** /help — lists what the bot can do (built from the real command set). */
 export default {
   data: new SlashCommandBuilder()
+    .setContexts(InteractionContextType.Guild)
     .setName('help')
     .setDescription('Show everything this bot can do'),
 

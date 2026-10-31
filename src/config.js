@@ -29,3 +29,9 @@ if (!config.token) {
     'DISCORD_TOKEN is missing. Copy .env.example to .env and set your bot token.',
   );
 }
+
+if (!config.clientId) {
+  throw new Error(
+    'CLIENT_ID is missing. Copy .env.example to .env and set your Application ID.',
+  );
+}

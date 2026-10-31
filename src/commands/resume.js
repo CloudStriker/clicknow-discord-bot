@@ -1,8 +1,9 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 import { botChannelProblem } from './guard.js';
 
 export default {
   data: new SlashCommandBuilder()
+    .setContexts(InteractionContextType.Guild)
     .setName('resume')
     .setDescription('Resume the paused track'),
 

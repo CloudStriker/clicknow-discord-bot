@@ -19,6 +19,12 @@ test('every command module exports data + execute and is registered', () => {
   }
 });
 
+test('every command is guild-only (contexts equals [0])', () => {
+  for (const c of commands) {
+    assert.deepEqual(c.data.toJSON().contexts, [0], `${c.data.name} is not guild-only`);
+  }
+});
+
 test('help describes the real command set', async () => {
   // whatever is registered must show up in /help's reply
   const registered = commands.map((c) => c.data.name).sort();

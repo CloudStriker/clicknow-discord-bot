@@ -1,8 +1,9 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 
 /** /volume 1–100 — 100 is full source loudness (above 100 would distort). */
 export default {
   data: new SlashCommandBuilder()
+    .setContexts(InteractionContextType.Guild)
     .setName('volume')
     .setDescription('Set playback volume for this server (1–100%)')
     .addIntegerOption((opt) =>

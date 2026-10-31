@@ -1,9 +1,10 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 import { botChannelProblem } from './guard.js';
 
 /** /stop — clear the queue and leave the voice channel. */
 export default {
   data: new SlashCommandBuilder()
+    .setContexts(InteractionContextType.Guild)
     .setName('stop')
     .setDescription('Stop playing, clear the queue, and leave voice'),
 

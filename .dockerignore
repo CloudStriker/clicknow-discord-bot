@@ -1,0 +1,8 @@
+.env
+cookies.txt
+data
+node_modules
+.git
+.superpowers
+tests
+docs

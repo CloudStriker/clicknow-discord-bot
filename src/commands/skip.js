@@ -1,9 +1,10 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 import { botChannelProblem } from './guard.js';
 
 /** /skip — drop the current track, start the next one. */
 export default {
   data: new SlashCommandBuilder()
+    .setContexts(InteractionContextType.Guild)
     .setName('skip')
     .setDescription('Skip the current track'),
 

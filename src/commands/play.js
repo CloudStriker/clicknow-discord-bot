@@ -1,4 +1,4 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 
 import { VoiceJoinError, voicePermissionProblem } from '../players.js';
 import { classifyInput, discover } from '../ytdlp.js';
@@ -6,6 +6,7 @@ import { classifyInput, discover } from '../ytdlp.js';
 /** /play <query> — search text, a video URL, or a playlist URL. */
 export default {
   data: new SlashCommandBuilder()
+    .setContexts(InteractionContextType.Guild)
     .setName('play')
     .setDescription('Play from YouTube: paste a video/playlist URL or type words to search')
     .addStringOption((opt) =>

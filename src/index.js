@@ -48,6 +48,11 @@ client.once(Events.ClientReady, async (ready) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.inGuild()) {
+    await safeReply(interaction, 'I only work inside servers.');
+    return;
+  }
+
   if (interaction.isButton() && interaction.customId.startsWith('ctl:')) {
     console.log(`[button:${interaction.customId}] (by ${interaction.user.tag})`);
     try {

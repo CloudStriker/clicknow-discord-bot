@@ -1,4 +1,4 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 
 /**
  * /settings — per-guild configuration, saved in settings.json.
@@ -6,6 +6,7 @@ import { SlashCommandBuilder } from 'discord.js';
  */
 export default {
   data: new SlashCommandBuilder()
+    .setContexts(InteractionContextType.Guild)
     .setName('settings')
     .setDescription('Show or change this server’s bot settings')
     .addStringOption((opt) =>
