@@ -28,14 +28,22 @@ import {
 } from '@discordjs/voice';
 
 import { Queue } from './queue.js';
-import { YtDlpError } from './ytdlp.js';
+import { getStreamUrl, YtDlpError } from './ytdlp.js';
 
-const REAL_DEPS = {
+/**
+ * The real voice/yt-dlp seams (tests inject fakes via the 5th constructor arg).
+ * All of them must be ready synchronously — a lazy import() here caused a
+ * race where /play ran before the resolver existed ("getStreamUrl is not
+ * a function", seen live in production).
+ */
+export const defaultDeps = {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
-  // getStreamUrl is configured per-call inside #playNext/#deps — see below
+  getStreamUrl,
 };
+
+const REAL_DEPS = defaultDeps;
 
 export class GuildPlayer {
   constructor(guildId, client, settingsStore, globalConfig, deps) {
@@ -45,13 +53,7 @@ export class GuildPlayer {
     this.#client = client;
     this.#settings = settingsStore;
     this.#config = globalConfig;
-    this.#deps = deps ?? { ...REAL_DEPS, getStreamUrl: null };
-    if (this.#deps.getStreamUrl === null) {
-      // lazy import avoidance: real resolver set once, here
-      import('./ytdlp.js').then((m) => {
-        this.#deps.getStreamUrl = m.getStreamUrl;
-      });
-    }
+    this.#deps = deps ?? REAL_DEPS;
 
     this.#voiceChannelId = null;
     this.#connection = null;

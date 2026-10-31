@@ -54,6 +54,11 @@ test('settings: timeout is bounded 1–30; leave is on/off', () => {
   assert.deepEqual(leave.choices.map((c) => c.value), ['on', 'off']);
 });
 
+test('default deps have a synchronous getStreamUrl (no async wiring race)', async () => {
+  const { defaultDeps } = await import('../src/players.js');
+  assert.equal(typeof defaultDeps.getStreamUrl, 'function');
+});
+
 test('createCtx bundles the manager context', () => {
   const ctx = createCtx({ players: 'P', settings: 'S', config: 'C' });
   assert.equal(ctx.players, 'P');
