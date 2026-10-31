@@ -2,7 +2,9 @@
 
 **Track** — a single YouTube video (or its audio) selected to be played. Has a title, URL, duration, and requested-by user.
 
-**Queue** — the ordered list of Tracks waiting to be played in one server. There is exactly one Queue per server (guild). The currently playing Track is the head of the Queue; it is not a separate concept from the Queue.
+**Queue** — the ordered list of Tracks *waiting* to be played in one server. There is exactly one Queue per server (guild). The Current Track is not part of the Queue: position 1 of the Queue is the *next* Track.
+
+**Current Track** — the Track the Player is playing (or holding Paused) right now. Separate from the Queue.
 
 **Player** — the thing that takes the Track at the head of the Queue and turns it into audio packets sent to a Discord voice channel. One Player per server.
 
@@ -10,9 +12,21 @@
 
 **Play (command)** — adds a Track to the end of the Queue and joins a voice channel if the bot is not already in one. It never means "play immediately, interrupting the current Track."
 
-**Skip** — discards the Track currently at the head of the Queue and starts the next one.
+**Skip** — ends the Current Track and starts position 1 of the Queue. Skip always moves on, even in Loop mode *track*, and it ends a Pause.
 
-**Stop** — clears the Queue and leaves the voice channel.
+**Stop** — clears the Queue, ends the Current Track and leaves the voice channel.
+
+**Clear** — empties the Queue only; the Current Track keeps playing and the bot stays in voice.
+
+**Pause** — the Current Track is held mid-song; Resume continues it. A Pause counts as silence for the auto-leave timeout. Adding Tracks does not end a Pause.
+
+**Loop mode** — per-Guild, not saved, resets to *off* when the bot leaves voice. *off*: play each Track once. *track*: replay the Current Track. *queue*: a finished Track goes back to the end of the Queue. A Track that fails to play is never looped.
+
+**Shuffle** — randomizes the order of the Queue; the Current Track is untouched.
+
+**Now-playing message** — the message the bot posts when a Track starts, carrying the Controls. Only the newest one has working Controls; older ones are disabled.
+
+**Controls** — the buttons on the Now-playing message: Pause/Resume, Skip, Stop, Loop mode, Queue. Usable only by people in the bot's voice channel.
 
 **Stream source** — where Track audio comes from: YouTube only, in v1.
 
