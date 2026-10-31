@@ -1,5 +1,5 @@
 {
-  "name": "discord-music-bot",
+  "name": "clicknow-discord-bot",
   "version": "1.0.0",
   "description": "Private Discord bot that plays YouTube audio in voice channels via slash commands",
   "type": "module",

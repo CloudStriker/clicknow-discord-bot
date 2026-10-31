@@ -11,7 +11,7 @@ export default {
   async execute(interaction) {
     // Built from the registered command list so /help can never drift out
     // of sync when new commands are added.
-    const lines = ['🎼 **Music bot — commands**', ''];
+    const lines = ['🎼 **ClickNow-Discord-Bot — commands**', ''];
 
     for (const command of commands) {
       lines.push(`/\`${command.data.name}\` — ${command.data.description}`);

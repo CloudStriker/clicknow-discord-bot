@@ -1,4 +1,4 @@
-# discord-music-bot
+# ClickNow-Discord-Bot
 
 A private Discord bot that plays **YouTube** audio in voice channels from slash commands.
 Designed to run 24/7 on your own VPS in Docker, with per-guild settings and an
