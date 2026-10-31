@@ -5,6 +5,7 @@
 //   2. add it to the `commands` array below
 //   3. run: npm run deploy-commands   (registers it with Discord)
 
+import help from './help.js';
 import play from './play.js';
 import skip from './skip.js';
 import stop from './stop.js';
@@ -13,7 +14,7 @@ import volume from './volume.js';
 import settings from './settings.js';
 
 /** Every slash command, in the order Discord shows them hints for. */
-export const commands = [play, skip, stop, queue, volume, settings];
+export const commands = [help, play, skip, stop, queue, volume, settings];
 
 /**
  * The one object passed to every command's execute().

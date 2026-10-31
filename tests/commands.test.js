@@ -3,12 +3,28 @@ import assert from 'node:assert/strict';
 
 import { commands, createCtx } from '../src/commands/index.js';
 import play from '../src/commands/play.js';
+import help from '../src/commands/help.js';
+
+const COMMAND_NAMES = ['help', 'play', 'skip', 'stop', 'queue', 'volume', 'settings'];
 
 test('every command module exports data + execute and is registered', () => {
-  const names = ['play', 'skip', 'stop', 'queue', 'volume', 'settings'];
-  assert.deepEqual(commands.map((c) => c.data.name).sort(), [...names].sort());
+  assert.deepEqual(commands.map((c) => c.data.name).sort(), [...COMMAND_NAMES].sort());
   for (const c of commands) {
     assert.equal(typeof c.execute, 'function', `${c.data.name} has no execute`);
+  }
+});
+
+test('help describes the real command set', async () => {
+  // whatever is registered must show up in /help's reply
+  const registered = commands.map((c) => c.data.name).sort();
+  const replies = [];
+  const interaction = {
+    async reply(msg) { replies.push(msg); },
+  };
+  await help.execute(interaction);
+  const reply = replies.join(' ');
+  for (const name of registered) {
+    assert.ok(reply.includes(name), `help mentions /${name}`);
   }
 });
 
