@@ -5,12 +5,18 @@
 //   - an AudioPlayer that streams Opus audio into that channel
 //   - the leave timers (people left / queue went silent)
 //
-// Why a class per guild: Discord bots can be in many servers at once, and
-// each server must hear its own music. Everything here is per-guild state —
-// nothing is shared, so one guild's bot cannot break another's.
+// Two invariants this file protects (pinned in tests/players-flow.test.js):
+//   1. The ONLY thing that pulls the next Track is the player reaching Idle
+//      (or a track failing to resolve). `#leave()` bumps a session number
+//      and detaches the audio player, so a kick / auto-leave can never
+//      drain the queued tracks into a dead connection, and a stream error
+//      advances exactly once.
+//   2. A YouTube/yt-dlp failure is always contained: log it, tell the
+//      users, keep the queue moving.
 //
-// NOTE (Ruling from the pre-flight scan): the plan said `VoiceConnection.join()`
-// but the real @discordjs/voice API is joinVoiceChannel() — used below.
+// Test seam: the voice/yt-dlp functions are injectable via the 5th
+// constructor argument (tests use fakes; production passes nothing and
+// gets the real ones).
 
 import {
   createAudioPlayer,
@@ -22,30 +28,55 @@ import {
 } from '@discordjs/voice';
 
 import { Queue } from './queue.js';
-import { getStreamUrl, YtDlpError } from './ytdlp.js';
+import { YtDlpError } from './ytdlp.js';
+
+const REAL_DEPS = {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  // getStreamUrl is configured per-call inside #playNext/#deps — see below
+};
 
 export class GuildPlayer {
-  constructor(guildId, client, settingsStore, globalConfig) {
+  constructor(guildId, client, settingsStore, globalConfig, deps) {
     this.guildId = guildId;
+    this.queue = new Queue(100);
+
     this.#client = client;
     this.#settings = settingsStore;
     this.#config = globalConfig;
-
-    this.queue = new Queue(100);
+    this.#deps = deps ?? { ...REAL_DEPS, getStreamUrl: null };
+    if (this.#deps.getStreamUrl === null) {
+      // lazy import avoidance: real resolver set once, here
+      import('./ytdlp.js').then((m) => {
+        this.#deps.getStreamUrl = m.getStreamUrl;
+      });
+    }
 
     this.#voiceChannelId = null;
     this.#connection = null;
     this.#audio = null;
     this.#current = null; // Track playing right now
-    this.#resource = null; // live volume transformer lives here
+    this.#resource = null; // carries the live volume transformer
     this.#notifyChannel = null; // last interaction's text channel
-    this.#manualStop = false; // set by stop(), so Idle doesn't auto-advance
+    this.#manualStop = false;
     this.#silenceTimer = null;
+    this.#session = 0; // bumped on every leave; invalidates in-flight work
+  }
+
+  /** Track doing the playing right now, or null when idle. */
+  get nowPlaying() {
+    return this.#current;
+  }
+
+  /** The voice channel the bot sits in, or null when not in voice. */
+  get channelId() {
+    return this.#voiceChannelId;
   }
 
   /**
    * Add Tracks and start playing if the bot was idle.
-   * Returns what the command should tell the user.
+   * Returns { added, joinedHere, queueLength } for the command reply.
    */
   async enqueue(interaction, tracks) {
     const memberChannel = interaction.member?.voice?.channel;
@@ -60,9 +91,9 @@ export class GuildPlayer {
     const wasIdle = !this.#current;
     const added = this.queue.pushAll(tracks);
 
-    // Start immediately only for the user's own channel move/join;
-    // playNext() resolves stream URLs (a few seconds), so it runs un-awaited.
-    if (wasIdle && added > 0) this.#playNext();
+    if (wasIdle && added > 0) {
+      this.#playNext(); // resolves stream URLs (a few seconds), un-awaited
+    }
 
     return { added, joinedHere, queueLength: this.queue.length };
   }
@@ -78,33 +109,17 @@ export class GuildPlayer {
 
   /**
    * Skip the current Track. Returns false when there is nothing to skip.
-   * Stop-message is handled by the caller (commands/skip.js).
    */
-  /** Track doing the playing right now, or null when idle. */
-  get nowPlaying() {
-    return this.#current;
-  }
-
-  /** The voice channel the bot sits in, or null when not in voice. */
-  get channelId() {
-    return this.#voiceChannelId;
-  }
-
   skip() {
     if (!this.#audio) return false;
     const hadSomething = Boolean(this.#current || this.queue.length > 0);
-    this.#manualStop = false; // skipping advances to the next Track
-    this.#audio.stop(); // AudioPlayerStatus.Idle fires → #playNext()
+    this.#manualStop = false; // skipping means "advance to the next Track"
+    this.#audio.stop(); // Idle fires → #playNext() — exactly one advance
     return hadSomething;
   }
 
   /** Clear the queue and leave the voice channel. */
   stop() {
-    this.queue.clear();
-    this.#manualStop = true;
-    if (this.#audio?.state.status !== AudioPlayerStatus.Idle) {
-      this.#audio?.stop();
-    }
     this.#leave();
   }
 
@@ -118,21 +133,25 @@ export class GuildPlayer {
 
   /** Called by src/index.js on every voice-state update in this guild. */
   onVoiceUpdate(oldState, newState) {
-    // Our own bot was move/disconnected by someone else?
+    // Our own bot was kicked or disconnected?
     if (newState.member?.id === this.#client.user.id) {
       if (!newState.channelId) {
-        // kicked from voice — clean up so /play can start fresh later
-        this.#leave();
-      } else if (newState.channelId !== this.#voiceChannelId) {
+        this.#leave(); // clears the queue — nothing to hear, nothing to keep
+        return;
+      }
+      if (newState.channelId !== this.#voiceChannelId) {
         this.#voiceChannelId = newState.channelId;
       }
+      return;
     }
 
     if (!this.#settings.get(this.guildId).autoLeaveOn) return;
     if (!this.#connection || !this.#voiceChannelId) return;
 
-    const humans = this.#countHumans(this.#voiceChannelId);
-    if (humans === 0) this.#leave();
+    if (this.#countHumans(this.#voiceChannelId) === 0) {
+      console.log(`[${this.guildId}] auto-leave: everybody left the channel`);
+      this.#leave();
+    }
   }
 
   /** Called every 60 s; safety net for the "channel empty" check. */
@@ -140,8 +159,7 @@ export class GuildPlayer {
     if (!this.#connection || !this.#voiceChannelId) return;
     if (!this.#settings.get(this.guildId).autoLeaveOn) return;
 
-    const humans = this.#countHumans(this.#voiceChannelId);
-    if (humans === 0) {
+    if (this.#countHumans(this.#voiceChannelId) === 0) {
       console.log(`[${this.guildId}] auto-leave: nobody left in voice`);
       this.#leave();
     }
@@ -152,14 +170,13 @@ export class GuildPlayer {
   async #ensureVoice(channel) {
     if (this.#connection && this.#voiceChannelId === channel.id) return false;
 
-    // if the bot sits in a different channel in this guild, move over
-    if (this.#connection && this.#voiceChannelId !== channel.id) {
-      this.#leave(false);
-    }
+    // The bot is moving to a different channel in this guild: drop the old
+    // connection but KEEP the queue — the next /play picks it back up.
+    if (this.#connection) this.#teardown();
 
     this.#voiceChannelId = channel.id;
 
-    this.#connection = joinVoiceChannel({
+    this.#connection = this.#deps.joinVoiceChannel({
       channelId: channel.id,
       guildId: this.guildId,
       adapterCreator: channel.guild.voiceAdapterCreator,
@@ -175,11 +192,11 @@ export class GuildPlayer {
           entersState(this.#connection, VoiceConnectionStatus.Connecting, 5_000),
         ]);
       } catch {
-        this.#leave(false);
+        this.#leave();
       }
     });
 
-    this.#audio = createAudioPlayer();
+    this.#audio = this.#deps.createAudioPlayer();
     this.#connection.subscribe(this.#audio);
 
     // Track ended naturally → play the next one.
@@ -190,12 +207,13 @@ export class GuildPlayer {
       }
       this.#playNext();
     });
-    // Unrecoverable audio error (corrupt stream, OS audio issues…):
+
+    // Unrecoverable streaming error (corrupt stream, expired URL mid-song…):
+    // only report here. The library then transitions to Idle, which is the
+    // single place that advances the queue.
     this.#audio.on('error', (err) => {
       console.error(`[${this.guildId}] audio error: ${err.message}`);
       this.#notify('⚠️ Playback hiccup — skipping the current track.');
-      this.#manualStop = false;
-      this.#playNext();
     });
 
     return true;
@@ -206,36 +224,40 @@ export class GuildPlayer {
   async #playNext() {
     this.#clearSilenceTimer();
 
+    const session = this.#session;
+
     const next = this.queue.shift();
     if (!next) {
       this.#current = null;
       this.#resource = null;
-      this.#startSilenceTimer(); // maybe last person heard — see /settings
+      this.#startSilenceTimer(); // queue went silent — respect /settings
       return;
     }
 
     this.#current = next;
     try {
-      const { streamUrl, title } = await getStreamUrl(next.url, this.#config);
-      const resource = createAudioResource(streamUrl, { inlineVolume: true });
+      const { streamUrl, title } = await this.#deps.getStreamUrl(next.url, this.#config);
+      if (session !== this.#session) return; // we left while resolving — drop it
 
+      const resource = this.#deps.createAudioResource(streamUrl, { inlineVolume: true });
       const volumePct = this.#settings.get(this.guildId).volume;
       resource.volumeTransformer.setVolume(volumePct / 100);
 
       this.#resource = resource;
-      this.#audio.play(resource);
+      this.#audio?.play(resource);
       this.#announceNowPlaying(next, title);
     } catch (err) {
-      // Review-focus #1: a dead YouTube link or a yt-dlp failure may NEVER
-      // take the bot down — log it, tell the room, keep the queue moving.
+      if (session !== this.#session) return; // left while resolving — drop it
+
+      // Contained failure (invariant #2): the failed Track is already out of
+      // the queue; this recursion is what keeps one bad link from stalling
+      // a playlist.
       if (err instanceof YtDlpError) {
         console.warn(`[${this.guildId}] yt-dlp failed on "${next.url}": ${err.message}`);
       } else {
         console.error(`[${this.guildId}] unexpected play error: ${err}`);
       }
       this.#notify(`⚠️ Couldn't play **${next.title}** — skipping.`);
-      // The failed Track is already out of the queue; sounds simple, but this
-      // recursion is what keeps one bad link from stalling a playlist.
       this.#playNext();
     }
   }
@@ -248,14 +270,58 @@ export class GuildPlayer {
     this.#notify(`▶️ Now playing: **${resolvedTitle}**${duration}`);
   }
 
-  // ── leave timers ──────────────────────────────────────────────────────
+  // ── leaving ───────────────────────────────────────────────────────────
+
+  /**
+   * Full leave: clear timers + queue, tear down the dead player so its
+   * events can no longer advance anything. Guarded by synonyms below —
+   * this is the ONLY teardown path.
+   */
+  #leave() {
+    this.#clearSilenceTimer();
+    this.queue.clear();
+    this.#teardown();
+  }
+
+  /**
+   * Drop the connection + audio player without touching the queue/current.
+   * Used when the bot is moving between channels in the same guild.
+   */
+  #teardown() {
+    this.#current = null;
+    this.#resource = null;
+    this.#session += 1; // abandon any in-flight stream resolution
+    this.#manualStop = true; // if an Idle slips out of stop(), ignore it
+
+    const audio = this.#audio;
+    const connection = this.#connection;
+    this.#audio = null;
+    this.#connection = null;
+    this.#voiceChannelId = null;
+
+    audio?.removeAllListeners();
+    audio?.stop(true);
+
+    if (connection) {
+      try {
+        connection.destroy();
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
+  // ── timers / helpers ──────────────────────────────────────────────────
 
   #startSilenceTimer() {
     const { silenceTimeoutMin } = this.#settings.get(this.guildId);
     this.#silenceTimer = setTimeout(() => {
       console.log(`[${this.guildId}] auto-leave: queue silent for ${silenceTimeoutMin} min`);
-      this.stop();
+      this.#leave();
     }, silenceTimeoutMin * 60_000);
+    // An idling bot shouldn't hold the process open on this timer alone;
+    // in the Docker runtime the process has plenty of other work.
+    this.#silenceTimer.unref?.();
   }
 
   #clearSilenceTimer() {
@@ -271,37 +337,15 @@ export class GuildPlayer {
     return channel.members.filter((m) => !m.user.bot).size;
   }
 
-  #leave(notify = false) {
-    this.#clearSilenceTimer();
-    this.#current = null;
-    this.#resource = null;
-    this.#audio?.stop(true);
-
-    const conn = this.#connection;
-    const channelId = this.#voiceChannelId;
-    this.#connection = null;
-    this.#voiceChannelId = null;
-
-    if (conn) {
-      try {
-        conn.destroy();
-      } catch {
-        /* already gone */
-      }
-    }
-    if (channelId) {
-      // nothing else to clean; voice state cleanup happens from events
-    }
-  }
-
   #notify(content) {
-    this.#notifyChannel?.send?.(content).catch?.(() => {});
+    this.#notifyChannel?.send?.(content)?.catch?.(() => {});
   }
 
   // private fields
   #client;
   #settings;
   #config;
+  #deps;
   #voiceChannelId;
   #connection;
   #audio;
@@ -310,6 +354,7 @@ export class GuildPlayer {
   #notifyChannel;
   #manualStop;
   #silenceTimer;
+  #session;
 }
 
 function formatDuration(totalSeconds) {

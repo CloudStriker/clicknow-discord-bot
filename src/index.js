@@ -6,7 +6,7 @@
 //
 // Secrets come from .env — see README "Create the Discord app".
 
-import { Client, Events, GatewayIntentBits } from 'discord.js';
+import { Client, Events, GatewayIntentBits, REST, Routes } from 'discord.js';
 
 import { config } from './config.js';
 import { SettingsStore } from './settings.js';
@@ -26,9 +26,20 @@ const players = new GuildPlayers(client, settings, config);
 const ctx = createCtx({ players, settings, config });
 
 // ── events ────────────────────────────────────────────────────────────
-client.once(Events.ClientReady, (ready) => {
+client.once(Events.ClientReady, async (ready) => {
   console.log(`✅ Logged in as ${ready.user.tag}`);
   console.log(`   Settings file: ${config.settingsPath}`);
+
+  // Register slash commands on every boot (idempotent) so a fresh Docker
+  // deploy always has commands — no separate step to forget.
+  try {
+    const rest = new REST().setToken(config.token);
+    const body = commands.map((c) => c.data.toJSON());
+    await rest.put(Routes.applicationCommands(config.clientId), { body });
+    console.log(`✅ ${body.length} slash command(s) registered`);
+  } catch (err) {
+    console.error(`⚠️ Slash command registration failed: ${err.message}`);
+  }
 
   // Safety net for "everyone left the channel" — runs once a minute.
   setInterval(() => players.housekeeping(), 60_000);

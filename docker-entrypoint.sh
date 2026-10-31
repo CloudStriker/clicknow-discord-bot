@@ -6,11 +6,11 @@
 # for months (spec: maintenance target 6+ months).
 
 echo "[entrypoint] updating yt-dlp…"
-# --break-system-packages: on Debian 12 pip refuses system-wide installs otherwise.
-pip3 install --no-cache-dir --upgrade --break-system-packages yt-dlp \
-  >/dev/null 2>&1 \
-  || echo "[entrypoint] yt-dlp update failed — continuing with the version in the image"
-
-echo "[entrypoint] yt-dlp version: $(yt-dlp --version 2>/dev/null || echo 'unknown')"
+if pip3 install --no-cache-dir --upgrade --break-system-packages yt-dlp > /tmp/yt-dlp-install.log 2>&1; then
+  echo "[entrypoint] yt-dlp ready: $(yt-dlp --version 2>/dev/null || echo 'unknown version')"
+else
+  echo "[entrypoint] ⚠️ yt-dlp auto-update FAILED — using the version baked into the image. Install log tail:"
+  tail -5 /tmp/yt-dlp-install.log
+fi
 
 exec node src/index.js
