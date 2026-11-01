@@ -504,7 +504,8 @@ export class GuildPlayer {
     let message;
     try {
       message = await channel?.send?.(this.nowPlayingPayload());
-    } catch {
+    } catch (err) {
+      console.warn(`[${this.guildId}] sendNowPlaying failed in channel ${channel?.id}: ${err?.message ?? err}`);
       return false;
     }
     if (!message) return false;
