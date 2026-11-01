@@ -16,6 +16,7 @@ function fakePlayer(overrides = {}) {
     calls,
     queue,
     channelId: 'vc-1',
+    nowPlayingMessageId: 'live-1',
     get paused() {
       return paused;
     },
@@ -77,6 +78,7 @@ function fakeInteraction({
   customId = CONTROL_IDS.pause,
   voiceChannelId = 'vc-1',
   userTag = 'cinnamon.wool',
+  messageId = 'live-1',
 } = {}) {
   const replies = [];
   const updates = [];
@@ -85,6 +87,7 @@ function fakeInteraction({
   return {
     customId,
     guildId: 'guild-1',
+    message: { id: messageId },
     user: { tag: userTag },
     member: { voice: { channelId: voiceChannelId } },
     replies,
@@ -142,15 +145,17 @@ test('⏯️ twice → paused then resumed, update called with label Resume then
   assert.equal(label2, 'Pause');
 });
 
-test('⏯️ on a stale message while a newer Track plays toggles the current Track', async () => {
+test('⏯️ on a stale message is refused — only the newest message has live Controls', async () => {
   const player = fakePlayer();
   const ctx = ctxWith(player);
 
-  player.nowPlaying = { title: 'Track 2 (Newer)', durationSec: 120, requesterTag: 'bob' };
-  const i = fakeInteraction({ customId: CONTROL_IDS.pause });
+  const i = fakeInteraction({ customId: CONTROL_IDS.pause, messageId: 'old-1' });
   await handleControlButton(i, ctx);
-  assert.equal(player.paused, true);
-  assert.match(i.updates[0].content, /Track 2 \(Newer\)/);
+  assert.deepEqual(player.calls, [], 'stale presses never touch the player');
+  assert.deepEqual(i.replies, [
+    { content: 'Those controls are out of date — use /nowplaying for fresh ones.', ephemeral: true },
+  ]);
+  assert.equal(i.updates.length, 0);
 });
 
 test('🔁 three times → track, queue, off', async () => {

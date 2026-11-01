@@ -1,5 +1,9 @@
 import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 
+// No voice-channel check here (on purpose): /nowplaying only posts a
+// message, it doesn't control playback — and every button on it is guarded
+// separately by src/buttons.js (same-voice + newest-message checks).
+
 export default {
   data: new SlashCommandBuilder()
     .setContexts(InteractionContextType.Guild)

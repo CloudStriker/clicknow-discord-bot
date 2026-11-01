@@ -34,7 +34,7 @@ export default {
 
     const mode = interaction.options.getString('mode', true);
     player.setLoopMode(mode);
-    await player.refreshNowPlaying?.();
+    await player.refreshNowPlaying();
 
     const emoji = mode === 'track' ? '🔂' : '🔁';
     await interaction.reply(`${emoji} Loop: **${mode}** — ${DESCRIPTIONS[mode] ?? mode}`);

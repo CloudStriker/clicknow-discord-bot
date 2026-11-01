@@ -39,6 +39,9 @@ const VOICE_DEBUG = process.env.VOICE_DEBUG === '1';
 /** How long a voice connection may take to become ready before we give up. */
 const VOICE_READY_TIMEOUT_MS = 20_000;
 
+/** Values the Loop mode can take (spec #12); /loop and 🔁 rely on it. */
+const LOOP_MODES = ['off', 'track', 'queue'];
+
 /** A join that cannot work; `message` is shown to the user as-is. */
 export class VoiceJoinError extends Error {
   constructor(message) {
@@ -150,6 +153,15 @@ export class GuildPlayer {
   }
 
   /**
+   * Discord ID of the message whose Controls are live (spec #3), or null
+   * while nothing/no message is tracked. buttons.js uses it to reject
+   * presses on older messages.
+   */
+  get nowPlayingMessageId() {
+    return this.#nowPlayingMessage?.id ?? null;
+  }
+
+  /**
    * Hold the Current Track. A Pause counts as silence: the auto-leave
    * timeout starts now and Resume cancels it.
    *
@@ -158,7 +170,9 @@ export class GuildPlayer {
   pause(byTag) {
     if (!this.#current || !this.#audio) return 'nothing-playing';
     if (this.#paused) return 'already-paused';
-    this.#audio.pause(true);
+    // The library returns false while it has no resource yet (still
+    // downloading), and "still downloading" means nothing to hold.
+    if (!this.#audio.pause(true)) return 'nothing-playing';
     this.#paused = true;
     this.#pausedBy = byTag;
     this.#clearSilenceTimer();
@@ -256,12 +270,24 @@ export class GuildPlayer {
   /**
    * Skip the current Track. Returns false when there is nothing to skip.
    */
+  /**
+   * Skip the current Track. Returns false when there is nothing to skip.
+   *
+   * A Skip pressed while the next Track is still downloading (5–15 s gap)
+   * can't take effect: the player is Idle, so stopping it is a no-op. The
+   * press is lost — the user just presses again once the Track plays.
+   */
   skip() {
     if (!this.#audio) return false;
     const hadSomething = Boolean(this.#current || this.queue.length > 0);
     this.#manualStop = false; // skipping means "advance to the next Track"
     this.#skipRequested = true; // Loop mode track must not replay it
-    if (this.#paused) this.#endPause();
+    if (this.#paused) {
+      // A Paused player only reaches Idle through playback: resume first,
+      // then stop(). Without this the skip never lands.
+      this.#audio.unpause();
+      this.#endPause();
+    }
     this.#audio.stop(); // Idle fires → #playNext() — exactly one advance
     return hadSomething;
   }
@@ -357,6 +383,7 @@ export class GuildPlayer {
       debug: VOICE_DEBUG,
       behaviors: { maxMissedFrames: MAX_MISSED_FRAMES },
     });
+    this.#manualStop = false; // fresh player: every Idle it fires is real
     this.#connection.subscribe(this.#audio);
 
     if (VOICE_DEBUG) {
@@ -403,6 +430,8 @@ export class GuildPlayer {
     if (finished && this.#loopMode === 'track' && !skipped) {
       next = finished;
     } else {
+      // push() returning 0 (Queue full at 100) drops the finished Track:
+      // rare and harmless — the 100-cap was the user's explicit request.
       if (finished && this.#loopMode === 'queue') this.queue.push(finished);
       next = this.queue.shift();
     }
@@ -432,6 +461,9 @@ export class GuildPlayer {
       this.#killFfmpeg(); // the previous Track's process, if still alive
       this.#killCurrent = kill;
       this.#resource = resource;
+      // A Skip that landed while this Track was downloading stays with that
+      // gone-Idle player; don't let it suppress the Track's natural Loop.
+      this.#skipRequested = false;
       this.#audio?.play(resource);
       this.#sendNowPlaying(this.#notifyChannel);
     } catch (err) {
@@ -522,20 +554,18 @@ export class GuildPlayer {
   /** Grey out a message's Controls; ignores every failure. */
   #disableMessage(message) {
     if (!message?.edit) return;
-    try {
-      const disabled = buildControls({ paused: false, loopMode: 'off', disabled: true });
-      Promise.resolve(message.edit({ components: disabled })).catch(() => {});
-    } catch {
-      /* ignore */
-    }
+    const disabled = buildControls({ paused: false, loopMode: 'off', disabled: true });
+    Promise.resolve(message.edit({ components: disabled })).catch(() => {
+      /* deleted or no access — nothing left to grey out */
+    });
   }
 
   // ── leaving ───────────────────────────────────────────────────────────
 
   /**
    * Full leave: clear timers + queue, tear down the dead player so its
-   * events can no longer advance anything. Guarded by synonyms below —
-   * this is the ONLY teardown path.
+   * events can no longer advance anything. #teardown() is called only from
+   * here — this is the single teardown path.
    */
   #leave() {
     this.#clearSilenceTimer();
@@ -582,6 +612,7 @@ export class GuildPlayer {
   // ── timers / helpers ──────────────────────────────────────────────────
 
   #startSilenceTimer() {
+    if (!this.#settings.get(this.guildId).autoLeaveOn) return; // respect /settings
     const { silenceTimeoutMin } = this.#settings.get(this.guildId);
     this.#silenceTimer = setTimeout(() => {
       console.log(`[${this.guildId}] auto-leave: queue silent for ${silenceTimeoutMin} min`);
@@ -644,8 +675,6 @@ export class GuildPlayer {
   #nowPlayingMessage = null; // the one message with live Controls
   #nowPlayingToken = 0; // orders concurrent sends
 }
-
-const LOOP_MODES = ['off', 'track', 'queue'];
 
 /**
  * One GuildPlayer per guild; the manager is what src/index.js talks to.

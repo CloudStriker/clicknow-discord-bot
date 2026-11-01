@@ -15,6 +15,17 @@ export async function handleControlButton(interaction, ctx) {
     return;
   }
 
+  // Spec #3: only the newest Now-playing message has working Controls. A
+  // press on an older message (its disable edit failed or raced) is ignored,
+  // never allowed to resurrect dead controls next to the live ones.
+  if (interaction.message.id !== player.nowPlayingMessageId) {
+    await interaction.reply({
+      content: 'Those controls are out of date — use /nowplaying for fresh ones.',
+      ephemeral: true,
+    });
+    return;
+  }
+
   const { customId } = interaction;
 
   if (customId === CONTROL_IDS.pause) {

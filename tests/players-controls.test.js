@@ -28,37 +28,71 @@ function fakeTextChannel(name, { failEdits = false } = {}) {
   };
 }
 
-function setup({ failUrls = [], silenceTimeoutMin = 1, failEdits = false } = {}) {
-  const made = [];
-  const sent = [];
-  const text = fakeTextChannel('music', { failEdits });
+/**
+ * Fake audio player that mirrors @discordjs/voice where the bot depends on it:
+ * pause() only works while playing, stop() goes Idle unless the player is
+ * paused (paused + non-forced stop never reaches Idle), play() unpauses.
+ */
+function fakeAudio() {
   const audio = {
     handlers: {},
     pauseCalls: 0,
     unpauseCalls: 0,
+    active: false, // a resource is held by the player
+    libPaused: false,
     on(event, fn) {
       (this.handlers[event] ??= []).push(fn);
     },
     removeAllListeners() {
       this.handlers = {};
+      this.active = false;
+      this.libPaused = false;
     },
-    play() {},
+    play() {
+      this.active = true;
+      this.libPaused = false;
+    },
     pause() {
+      if (!this.active || this.libPaused) return false;
+      this.libPaused = true;
       this.pauseCalls += 1;
       return true;
     },
     unpause() {
+      if (!this.libPaused) {
+        this.unpauseCalls += 1;
+        return false;
+      }
+      this.libPaused = false;
       this.unpauseCalls += 1;
       return true;
     },
-    stop() {
-      this.idle();
+    stop(force = false) {
+      if (!this.active) return false;
+      if (force || !this.libPaused) this.idle(); // a paused non-forced stop stalls (like the real library)
       return true;
     },
     idle() {
+      this.active = false;
+      this.libPaused = false;
       for (const fn of this.handlers.idle ?? []) fn();
     },
   };
+  return audio;
+}
+
+function setup({
+  failUrls = [],
+  silenceTimeoutMin = 1,
+  failEdits = false,
+  holdResource = false,
+  autoLeaveOn = true,
+} = {}) {
+  const made = [];
+  const sent = [];
+  const pending = []; // resolvers for held resources
+  const text = fakeTextChannel('music', { failEdits });
+  const audio = fakeAudio();
   const deps = {
     joinVoiceChannel: () => ({ on() {}, subscribe() {}, destroy() {} }),
     createAudioPlayer: () => audio,
@@ -67,8 +101,12 @@ function setup({ failUrls = [], silenceTimeoutMin = 1, failEdits = false } = {})
       if (failUrls.includes(url)) throw new YtDlpError('yt-dlp exited with code 1');
       const resource = { playbackDuration: 0 };
       made.push({ url, resource });
+      if (holdResource) await new Promise((resolve) => pending.push(resolve));
       return { resource, kill() {} };
     },
+  };
+  const release = () => {
+    for (const resolve of pending.splice(0)) resolve();
   };
   const channel = {
     id: 'vc-1',
@@ -79,7 +117,7 @@ function setup({ failUrls = [], silenceTimeoutMin = 1, failEdits = false } = {})
     'guild-1',
     { user: { id: 'bot' }, channels: { cache: new Map() } },
     {
-      get: (id) => ({ autoLeaveOn: true, silenceTimeoutMin, volume: 100, guildId: id }),
+      get: (id) => ({ autoLeaveOn, silenceTimeoutMin, volume: 100, guildId: id }),
       set() {},
     },
     { cookiesFile: null, ytDlpPath: 'yt-dlp' },
@@ -95,7 +133,7 @@ function setup({ failUrls = [], silenceTimeoutMin = 1, failEdits = false } = {})
       },
     },
   };
-  return { player, audio, made, sent, text, interaction };
+  return { player, audio, made, sent, text, release, interaction };
 }
 
 const t = (name) => ({ title: name, url: `https://youtu.be/${name}`, durationSec: 100, requesterTag: 'u' });
@@ -393,6 +431,67 @@ test('a message that can no longer be edited does not break playback', async () 
   await settle();
 
   assert.equal(env.player.channelId, null);
+});
+
+// ── review round: real-library race conditions ─────────────────────────
+
+test('pause during the download window is rejected — nothing sounds yet', async () => {
+  const env = setup({ holdResource: true });
+  const promise = env.player.enqueue(env.interaction, [t('t1')]);
+  await settle(); // the Track is being downloaded…
+
+  assert.equal(env.player.pause('a'), 'nothing-playing');
+  assert.equal(env.audio.pauseCalls, 0, 'the library pause() must not run');
+  assert.equal(env.player.paused, false);
+
+  env.release(); // the download finishes
+  await promise;
+  await settle();
+
+  assert.equal(env.player.nowPlaying.title, 't1');
+  assert.equal(env.player.pause('a'), 'paused', 'pausing works once it plays');
+});
+
+test('skip pressed during a re-download is lost, but never holds Loop against replaying', async () => {
+  const env = setup({ holdResource: true });
+  await playing(env, [t('t1'), t('t2')]);
+  env.player.setLoopMode('track');
+
+  env.audio.idle(); // the Track ends → Loop re-downloads t1 (held)
+  env.player.skip(); // pressed while the re-download is in flight
+  env.release(); // the download finishes → t1 plays
+  await settle();
+  assert.equal(env.player.nowPlaying.title, 't1');
+
+  env.audio.idle(); // it ends naturally: Loop must replay it once more
+  await settle();
+  assert.equal(env.player.nowPlaying.title, 't1');
+});
+
+test('after a stop, the next session plays past its first Track', async () => {
+  const env = setup();
+  await playing(env, [t('t1'), t('t2')]);
+  env.player.stop();
+  await settle();
+
+  await playing(env, [t('t3'), t('t4')]);
+  assert.equal(env.player.nowPlaying.title, 't3');
+
+  env.audio.idle();
+  await settle();
+  assert.equal(env.player.nowPlaying.title, 't4', 'the queue does not stall after t3');
+});
+
+test('autoLeaveOn=false: even a paused bot is never auto-left', async (ctx) => {
+  const env = setup({ autoLeaveOn: false, silenceTimeoutMin: 1 });
+  await playing(env, [t('t1')]);
+  ctx.mock.timers.enable({ apis: ['setTimeout'] });
+
+  env.player.pause('a');
+  ctx.mock.timers.tick(120_000);
+
+  assert.equal(env.player.channelId, 'vc-1', 'still in voice');
+  ctx.mock.timers.reset();
 });
 
 mock.reset();
