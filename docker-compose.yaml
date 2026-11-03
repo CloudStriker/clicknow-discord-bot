@@ -14,13 +14,13 @@ services:
     build: .
     image: clicknow-discord-bot
     container_name: clicknow-discord-bot
-    restart: unless-stopped       # back after crashes/reboots, unless you ran `docker compose stop/down`
+    restart: unless-stopped # back after crashes/reboots, unless you ran `docker compose stop/down`
     env_file: .env
     volumes:
-      - ./data:/app/data          # per-guild settings survive restarts
+      - ./data:/app/data # per-guild settings survive restarts
       # Optional: only if YouTube demands login cookies for this IP (README FAQ):
       # - ./cookies.txt:/app/cookies.txt:ro
     # --- resource limits (spec decision #1) ---
-    cpus: "0.25"
+    cpus: "0.50"
     mem_limit: 512m
     memswap_limit: 1g
