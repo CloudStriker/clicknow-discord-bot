@@ -136,7 +136,7 @@ git clone https://github.com/CloudStriker/clicknow-discord-bot.git
 cd clicknow-discord-bot
 cp .env.example .env
 nano .env                      # paste DISCORD_TOKEN and CLIENT_ID (no quotes)
-docker compose up -d --build   # build and start; restarts automatically after reboots
+docker compose up -d           # pulls the prebuilt image and starts; restarts automatically after reboots
 docker compose logs -f         # watch it start (Ctrl+C stops watching, the bot keeps running)
 ```
 
@@ -152,7 +152,7 @@ time, Discord can take a few minutes to show them.
 docker compose logs -f                      # live logs
 docker compose restart                      # restart the bot
 docker compose down                         # stop the bot
-git pull && docker compose up -d --build    # update to the latest version
+docker compose pull && docker compose up -d # update to the latest version
 ```
 
 ### Does the bot start again by itself?
