@@ -3,7 +3,8 @@
 #   start:   docker compose up -d --build
 #   logs:    docker compose logs -f
 #   stop:    docker compose down
-#   update:  git pull && docker compose up -d --build
+#   update:  docker compose pull && docker compose up -d
+#   (from source instead: git pull && docker compose up -d --build)
 #
 # Secrets live in .env (copy .env.example). Never commit it.
 
@@ -12,7 +13,7 @@ name: clicknow-discord-bot
 services:
   bot:
     build: .
-    image: clicknow-discord-bot
+    image: ghcr.io/cloudstriker/clicknow-discord-bot:latest
     container_name: clicknow-discord-bot
     restart: unless-stopped # back after crashes/reboots, unless you ran `docker compose stop/down`
     env_file: .env
