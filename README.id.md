@@ -132,7 +132,7 @@ git clone https://github.com/CloudStriker/clicknow-discord-bot.git
 cd clicknow-discord-bot
 cp .env.example .env
 nano .env                      # isi DISCORD_TOKEN dan CLIENT_ID (tanpa tanda kutip)
-docker compose up -d --build   # build lalu jalankan; otomatis menyala lagi setelah reboot
+docker compose up -d           # tarik image jadi lalu jalankan; otomatis menyala lagi setelah reboot
 docker compose logs -f         # lihat proses start (Ctrl+C hanya berhenti melihat, bot tetap jalan)
 ```
 
@@ -148,7 +148,7 @@ bisa butuh beberapa menit sampai perintahnya muncul.
 docker compose logs -f                      # lihat log langsung
 docker compose restart                      # restart bot
 docker compose down                         # matikan bot
-git pull && docker compose up -d --build    # perbarui ke versi terbaru
+docker compose pull && docker compose up -d # perbarui ke versi terbaru
 ```
 
 ### Apakah bot menyala lagi sendiri?
